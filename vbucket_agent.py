@@ -16,12 +16,19 @@ import simplejson as json
 import subprocess
 import zlib
 import re
+import getopt
+import socket, IN
 
 INIT_CMD_STR = "INIT"
 CONFIG_CMD_STR = "CONFIG"
 HEARTBEAT_CMD_STR = "Alive"
 DEFAULT_HEARTBEAT_INTERVAL = 120
 DEFAULT_SLEEP = 10
+DEFAULT_VBS_HOST = "127.0.0.1"
+DEFAULT_VBS_PORT = 11200
+DEFAULT_MB_HOST = "127.0.0.1"
+DEFAULT_MB_PORT = 11211
+BAD_DISK_FILE = "/var/tmp/vbs/bad_disk"
 
 INVALID_CMD     = 0
 INIT_CMD        = 1
@@ -29,12 +36,17 @@ CONFIG_CMD      = 2
 
 MIN_DATA_LEN    = 4 # The first 4 bytes of a packet give us the length 
 
-TAP_REGISTRATION_SCRIPT_PATH = "/home/vnatarajan/workspace/multivbucket/ep-engine/management/mbadm-tap-registration"
-VBUCKET_MIGRATOR_PATH = "/home/vnatarajan/workspace/multivbucket/vbucketmigrator/vbucketmigrator"
-MBVBUCKETCTL_PATH = "/home/vnatarajan/workspace/multivbucket/ep-engine/management/mbvbucketctl"
+#TAP_REGISTRATION_SCRIPT_PATH = "/home/vnatarajan/workspace/multivbucket/ep-engine/management/mbadm-tap-registration"
+#VBUCKET_MIGRATOR_PATH = "/home/vnatarajan/workspace/multivbucket/vbucketmigrator/vbucketmigrator"
+#MBVBUCKETCTL_PATH = "/home/vnatarajan/workspace/multivbucket/ep-engine/management/mbvbucketctl"
 
-CONFIG_CMD_OK_JSON = '{"Cmd":"Config", "Status":"OK"]}'
-UNKNOWN_CMD_JSON = '{"Cmd":"Unknown", "Status":"ERROR"}'
+TAP_REGISTRATION_SCRIPT_PATH = "/opt/membase/lib/python/mbadm-tap-registration"
+VBUCKET_MIGRATOR_PATH = "/opt/membase/bin/vbucketmigrator"
+MBVBUCKETCTL_PATH = "//opt/membase/lib/python/mbvbucketctl"
+
+CONFIG_CMD_OK_JSON = '{"Cmd":"CONFIG", "Status":"OK"}'
+UNKNOWN_CMD_JSON = '{"Cmd":"UNKNOWN", "Status":"ERROR"}'
+HEARTBEAT_CMD = '{"Cmd":"ALIVE"}'
 
 class MigrationManager:
 
@@ -74,6 +86,33 @@ class MigrationManager:
         print "Final table"
         print self.vbtable
 
+
+    def parse_config_row(self, row):
+#        global mb_host, mb_port
+        source = row.get('Source')
+        if (':' not in source):
+#            mb_host = source
+            source = source + ':' + str(DEFAULT_MB_PORT)
+#        elif (source != ''):
+#            (mb_host, mb_port) = source.split(':')
+
+        dest = row.get('Destination')
+        if (':' not in dest):
+            dest = dest + ':' + str(DEFAULT_MB_PORT)
+
+        vblist = row.get('VbId')
+
+        if (source == '' or dest == '' or len(vblist) == 0):
+            raise RuntimeError("For row [" + str(row) + "], source/destination/vbucket list missing")
+            
+        vblist.sort()
+        key = source + "|" + dest
+        value = {}
+        value['source'] = source
+        value['destination'] = dest
+        value['vblist'] = vblist
+        return key, value
+
     def handle_new_config(self, config_cmd, ifaces):
         new_vb_table = {}
         if ('HeartBeatTime' in config_cmd):
@@ -100,30 +139,15 @@ class MigrationManager:
         err_details = []
         iface_count = len(ifaces)
         for row in config_data:
-            source = row.get('Source')
-            if (source == ''):
-                err_details += "Source missing"
-            dest = row.get('Destination')
-            if (dest == ''):
-                err_details += " Destination missing"
-            vblist = row.get('VbId')
-            if (len(vblist) == ''):
-                err_details += " Vbucket list missing"
-            if (source == '' or dest == '' or len(vblist) == ''):
-                err_details.append("For row [" + row + "], source/destination/vbucket list missing")
-                continue
-                
-            vblist.sort()
-            #vblist_str = ",".join(str(vb) for vb in vblist)
-            key = source + "|" + dest
-            value = {}
-            value['source'] = source
-            value['destination'] = dest
-            value['vblist'] = vblist
-            value['interface'] = ifaces[i%iface_count]
-            print value
-            new_vb_table[key] = value
-            i=i+1
+            try:
+                (key, value) = self.parse_config_row(row)
+                value['interface'] = ifaces[i%iface_count]
+                i=i+1
+                print value
+                new_vb_table[key] = value
+            except RuntimeError, (message):
+                err_details.append(message)
+
 
         new_migrators = []
         # Compare old and new vb tables
@@ -175,7 +199,7 @@ class MigrationManager:
         if (len(err_details)):
             return json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":err_details})
         else:
-            return json.dumps(CONFIG_CMD_OK_JSON)
+            return CONFIG_CMD_OK_JSON
 
     #def report_errors(self, error_str)
 
@@ -229,7 +253,7 @@ class Migrator(threading.Thread):
 
             # Start the VBM
             vblist_str = ",".join(str(vb) for vb in vblist)
-            self.vbmp = subprocess.Popen(["sudo", VBUCKET_MIGRATOR_PATH, "-h", source, "-b", vblist_str, "-d", dest, "-N", tapname, "-A", "-i", interface, "-v", "–r"], stdout=subprocess.PIPE, stderr=subprocess.PIPE) 
+            self.vbmp = subprocess.Popen(["sudo", VBUCKET_MIGRATOR_PATH, "-h", source, "-b", vblist_str, "-d", dest, "-N", tapname, "-A", "-i", interface, "-v", "-r"], stdout=subprocess.PIPE, stderr=subprocess.PIPE) 
             print " Started VBM with pid " + str(self.vbmp.pid) + " interface " + interface
             # Wait for a couple of seconds to see if all is well # TODO Something better?
             start = time.time()
@@ -269,7 +293,7 @@ class Migrator(threading.Thread):
                 master_vbucketctlp = subprocess.Popen([MBVBUCKETCTL_PATH, source, "set", str(vb), "active"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 (vbout, vberr) = master_vbucketctlp.communicate()
                 if (vberr != ''):
-                    print "Error marking vbucket " + str(vb) + " as active on " + source
+                    print "Error marking vbucket " + str(vb) + " as active on " + source +  " error = " + vberr
                     errmsg = errmsg + " Error marking vbucket " + str(vb) + " as active on " + source
              
                 # Mark vbucket as replica on slave            
@@ -277,7 +301,7 @@ class Migrator(threading.Thread):
                 slave_vbucketctlp = subprocess.Popen([MBVBUCKETCTL_PATH, dest, "set", str(vb), "replica"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 (vbout, vberr) = slave_vbucketctlp.communicate()
                 if (vberr != ''):
-                    print "Error marking vbucket " + str(vb) + " as replica on " + dest
+                    print "Error marking vbucket " + str(vb) + " as replica on " + dest +  " error = " + vberr
                     errmsg = errmsg + " Error marking vbucket " + str(vb) + " as replica on " + dest
 
         except KeyError:
@@ -285,7 +309,7 @@ class Migrator(threading.Thread):
             errmsg = "Unable to find key " + self.key + " in mm vbtable"
 
         if (errmsg != ''):
-            create_error(source, dest, vblist, errmsg)
+            err = create_error(source, dest, vblist, errmsg)
             errqueue.put(err)
             return 1
 
@@ -332,47 +356,53 @@ class SocketWrapper:
             except socket.timeout:
                 return ''
             if (chunk == ''):
-                #TODO Print some error msg
-                return chunk
+                self.s.close()
+                raise RuntimeError("socket connection broken")
             data += chunk
 
         return data
 
 
     def send_data(self, data, len):
+        print "Sending data  " + data
         sent_len = 0
-		self.s.send(struct.pack('>I', len))
-		print "Sending data  " + data
+        self.s.send(struct.pack('>I', len))
         while(sent_len < len):
-            l1 = self.s.send(data[sent_len:])
-            if (l1 == 0):
+            try:
+                l1 = self.s.send(data[sent_len:])
+                if (l1 == 0):
+                    raise RuntimeError("socket connection broken")
+            except socket.timeout:
                 return sent_len
             sent_len += l1        
-
+        print "Send len " + str(sent_len)
         return sent_len
 
     def connect(self):
         try:
             self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
             self.s.settimeout(DEFAULT_SLEEP)
-            self.s.connect((host, port))
+            if (self.host != DEFAULT_VBS_HOST):
+                self.s.setsockopt(socket.SOL_SOCKET, IN.SO_BINDTODEVICE, "eth0"+'\0')
+            self.s.connect((self.host, self.port))
             return ''
+        except socket.timeout:
+            return 'Socket timed out in connect'
         except socket.error, (value,message):
             if self.s: 
                 self.s.close() 
-            return message
-
+            return message                
 
 def read_command(sock):
     """Receive from the socket and parse to find command name"""
 
     cmd_len = -1
-    #print "Reading " + str(MIN_DATA_LEN) + " bytes" 
+    print "Reading " + str(MIN_DATA_LEN) + " bytes" 
     data = sock.recv_data(MIN_DATA_LEN)
     if (len(data) < MIN_DATA_LEN):
         return ''
 
-    print "Read " + str(len(data)) + " bytes data = " + data 
+    print "Read " + str(len(data)) + " bytes"
 
     # The first 4 bytes are the length
     cmd_len, = struct.unpack('>I', data)     
@@ -442,7 +472,7 @@ def get_up_ifaces(vba_ifaces):
         if interface in up_ifaces:
             vba_up_ifaces.append(interface)
 
-    print "Up ifaces " + str(vba_up_ifaces) 
+    #print "Up ifaces " + str(vba_up_ifaces) 
     return vba_up_ifaces
 
 
@@ -471,15 +501,47 @@ def get_mb_vblist(port):
 
                  
 def handle_init_cmd(cmd):                 
-        
-    # TODO Read disk configuration
-    disk_count = 6
-    (active_vblist, replica_vblist) = get_mb_vblist(11211)
-    
-    # Create the response    
-    return json.dumps({'Agent':'VBA', 'Capacity':disk_count, 'Vbuckets':{'Master':active_vblist, 'Replica':replica_vblist}})
+    # Read disk configuration
+    #disk_list_cmd = "df -h | grep sda"
+    #disk_count_cmd = "ls -ld /data_*/membase  | wc -l"	
+    disk_count_cmd = "echo stats kvstore | nc 0 11211 | grep \"status online\" | wc -l"
+    dlp = subprocess.Popen([disk_count_cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    (dlout, dlerr) = dlp.communicate()
+    if (dlout == '' or dlerr != ''):
+        print "No disk found! Assuming 1 disk"
+        disk_count = 1
+    else:
+        # Read the bad disk file
+        print dlout
+        disk_count = int(dlout)
 
-    
+    return json.dumps({'Agent':'VBA', 'Capacity':disk_count})
+
+    #(active_vblist, replica_vblist) = get_mb_vblist(11211)
+    # Create the response    
+    #return json.dumps({'Agent':'VBA', 'Capacity':disk_count, 'Vbuckets':{'Master':active_vblist, 'Replica':replica_vblist}})
+
+def parse_options(opts):
+    global vbs_host, vbs_port
+    for o,a in opts:
+        if (o == "-f"):
+            file = open(a) 
+            for line in file:
+                line = line.strip('\n')
+                if (line.find(':') != -1):
+                    vbs_host,vbs_port = line.split(":")
+                    if (vbs_host == ''):
+                        vbs_host = DEFAULT_VBS_HOST
+                    if (vbs_port == ''):
+                        vbs_port = DEFAULT_VBS_PORT
+                    else:
+                        vbs_port = int(vbs_port)
+                elif (line != ''):
+                    vbs_host = line
+                    vbs_port = DEFAULT_VBS_PORT
+            file.close()
+
+
 if __name__ == '__main__':
 
     errqueue = Queue.Queue()
@@ -487,15 +549,22 @@ if __name__ == '__main__':
     heartbeat_interval = DEFAULT_HEARTBEAT_INTERVAL
     last_heartbeat = 0
     # TODO Read input config 
-    vba_ifaces = ["eth0", "eth1"]
+    vba_ifaces = ["eth0"]
     up_ifaces = get_up_ifaces(vba_ifaces)
     # TODO Read VBS address
-    host = '127.0.0.1'
-    port = 11200
+    vbs_host = DEFAULT_VBS_HOST
+    vbs_port = DEFAULT_VBS_PORT
+#    mb_host = DEFAULT_MB_HOST
+#    mb_port = DEFAULT_MB_PORT
+    opts, args = getopt.getopt(sys.argv[1:], 'f:')
+    if (len(opts) != 0):
+        parse_options(opts)
 
-    mm = MigrationManager(host, port)
+    print "Connecting to " + vbs_host + ":[" + str(vbs_port) +  "]"
+    port = int(vbs_port)
+    mm = MigrationManager(vbs_host, vbs_port)
 
-    vbs_sock = SocketWrapper(host, port)
+    vbs_sock = SocketWrapper(vbs_host, vbs_port)
     connected = False
     # listen for commands
     while 1:
@@ -527,11 +596,12 @@ if __name__ == '__main__':
                     #error
                     print "Error: Unknown command " + cmd_name
                     unknown_cmd_str = json.dumps(UNKNOWN_CMD_JSON)
-                    vbs_sock.send_data(unknown_resp_str, len(unknown_resp_str))
+                    vbs_sock.send_data(unknown_cmd_str, len(unknown_cmd_str))
 
             #send heartbeat or error messages (if any)
             now = time.time()
             if (errqueue.empty() == False):
+                print "Non empty error queue"
                 err = errqueue.get_nowait()
                 err_json = json.dumps(err)
                 vbs_sock.send_data(err_json, len(err_json))
@@ -539,7 +609,7 @@ if __name__ == '__main__':
                 print "Error in queue!"
                 print err
             elif (now - heartbeat_interval >= last_heartbeat):
-                #vbs_sock.send_data(HEARTBEAT_CMD)
+                vbs_sock.send_data(HEARTBEAT_CMD, len(HEARTBEAT_CMD))
                 last_heartbeat = now
 
             new_up_ifaces = get_up_ifaces(vba_ifaces)
@@ -550,6 +620,9 @@ if __name__ == '__main__':
 
         except socket.error, (value,message):
             print "Got socket error [" + message + "]"
+            connected = False
+        except RuntimeError, (message):
+            print "Got socket runtime error [" + str(message) + "]"
             connected = False
 
 
