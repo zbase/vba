@@ -255,7 +255,7 @@ class Migrator(threading.Thread):
                     time.sleep(0.5)
 
         except KeyError:
-            logger.warning('Unable to find key %s in vb table while starting VBM', self.key)
+            logging.warning('Unable to find key %s in vb table while starting VBM', self.key)
             errmsg = "Unable to find key " + self.key + " in mm vbtable"
             err = create_error(source, dest, vblist, errmsg)
             errqueue.put(err)
@@ -276,7 +276,7 @@ class Migrator(threading.Thread):
                 master_vbucketctlp = subprocess.Popen([MBVBUCKETCTL_PATH, source, "set", str(vb), "active"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 (vbout, vberr) = master_vbucketctlp.communicate()
                 if (vberr != ''):
-                    logging.warning('Error marking vbucket %d as active on %s. error; [%s]', v, source, vberr)
+                    logging.warning('Error marking vbucket %d as active on %s. error; [%s]', vb, source, vberr)
                     errmsg = errmsg + " Error marking vbucket " + str(vb) + " as active on " + source
              
                 # Mark vbucket as replica on slave            
@@ -374,6 +374,9 @@ class Migrator(threading.Thread):
         # Get count of items per vbucket on replica
         new_replica_items = self.get_vb_items(dest)
     
+        if (len(new_master_items) == 0 or len(new_replica_items) == 0):
+            return False
+
         if (len(self.master_items) == 0):
             self.master_items = new_master_items
             self.replica_items = new_replica_items
@@ -433,6 +436,7 @@ class Migrator(threading.Thread):
                     if (restart_vbm == True):
                         os.kill(self.vbmp.pid, signal.SIGTERM)
                         time.sleep(1)
+                        restart_vbm = False
 
                     if (self.setup_vbuckets() != 0):       # Doing this again because VBM might have died because the remote MB died. 
                         time.sleep(10)                      # Some time before you retry
@@ -442,7 +446,6 @@ class Migrator(threading.Thread):
                         time.sleep(10)                      # Some time before you retry
                         continue;
 
-                    restart_vbm = False
 
                 time.sleep(1)       # TODO Something better?
                 cnt = cnt + 1
@@ -450,7 +453,7 @@ class Migrator(threading.Thread):
                     cnt = 0
                     if (self.check_replication_status() == False):
                         restart_vbm = True
-        except Exception:
+        except Exception, e:
             logging.warning('Exiting thread %s because of exception: [%s]', self.key, str(e))
 
         # Stop - kill the VBM and return
@@ -665,7 +668,7 @@ if __name__ == '__main__':
     mb_host = DEFAULT_MB_HOST
     mb_port = check_mb_status()
     if (mb_port == 0):
-        logger.warning('Membase not up on the machine, will exit')
+        logging.warning('Membase not up on the machine, will exit')
         sys.exit()
     mb_pid = get_mb_pid()
     logging.info('Membase at %s:%d, membase PID %s', mb_host, mb_port, mb_pid)

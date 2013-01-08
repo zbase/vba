@@ -40,7 +40,7 @@ start () {
 
     # cleanup any vbucket agents, vbucketmigrators still running
     killproc -p $VBAPIDFILE vbucket_agent.py
-    sudo killall $VBUCKETMIGRATOR
+    sudo killall $VBUCKETMIGRATOR 2> /dev/null
 
     $MONVBA > /dev/null 2>&1 &
     rc=$?
