@@ -26,19 +26,19 @@ HEARTBEAT_CMD_STR = "Alive"
 DEFAULT_HEARTBEAT_INTERVAL = 120
 DEFAULT_SLEEP = 10
 DEFAULT_VBS_HOST = "127.0.0.1"
-DEFAULT_VBS_PORT = 11200
+DEFAULT_VBS_PORT = 14000
 DEFAULT_MB_HOST = "127.0.0.1"
 DEFAULT_MB_PORT = 11211
 BAD_DISK_FILE = "/var/tmp/vbs/bad_disk"
-ACTIVITY_DIFF = 50
 VBA_PID_FILE = "/var/run/vbs/vba.pid"
 
 VBM_STATS_SOCK = "/var/tmp/vbs/vbm.sock"
 MB_PID_FILE = "/var/run/memcached/memcached.pid"
-DEFAULT_REPLICATION_DIFF = 50
-#VBM_STATS_SOCK = "/tmp/vbm.sock"
-#MB_PID_FILE = "/tmp/memcached.pid"
-#DEFAULT_REPLICATION_DIFF = 1000
+DEFAULT_REPLICATION_DIFF = 1000
+
+CHECKPOINT_STATS_STR = "stats checkpoint"
+VBUCKET_STATS_STR = "stats vbucket"
+KVSTORE_STATS_STR = "stats kvstore"
 
 INVALID_CMD     = 0
 INIT_CMD        = 1
@@ -46,15 +46,10 @@ CONFIG_CMD      = 2
 
 MIN_DATA_LEN    = 4 # The first 4 bytes of a packet give us the length 
 
-#TAP_REGISTRATION_SCRIPT_PATH = "/home/vnatarajan/workspace/multivbucket/ep-engine/management/mbadm-tap-registration"
-#VBUCKET_MIGRATOR_PATH = "/home/vnatarajan/workspace/multivbucket/vbucketmigrator/vbucketmigrator"
-#MBVBUCKETCTL_PATH = "/home/vnatarajan/workspace/multivbucket/ep-engine/management/mbvbucketctl"
-
 TAP_REGISTRATION_SCRIPT_PATH = "/opt/membase/lib/python/mbadm-tap-registration"
 VBUCKET_MIGRATOR_PATH = "/opt/membase/bin/vbucketmigrator"
 MBVBUCKETCTL_PATH = "/opt/membase/lib/python/mbvbucketctl"
 
-CONFIG_CMD_OK_JSON = '{"Cmd":"CONFIG", "Status":"OK"}'
 UNKNOWN_CMD_JSON = '{"Cmd":"UNKNOWN", "Status":"ERROR"}'
 HEARTBEAT_CMD = '{"Cmd":"ALIVE"}'
 
@@ -185,7 +180,7 @@ class MigrationManager:
         if (len(err_details)):
             return json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":err_details})
         else:
-            return CONFIG_CMD_OK_JSON
+            return json.dumps({"Cmd":"Config", "Status":"OK"})
 
     def get(self, key):
         v = self.vbtable[key]
@@ -205,7 +200,7 @@ class Migrator(threading.Thread):
     def is_tap_registered(self, source):
         (host, port) = source.split(':')
         # Get checkpoint stats from the membase. If the tap is registered, it will be listed in the stats
-        cmd_str = "echo stats checkpoint | nc " + host + " " + port + "| grep repli-" + ("%X" % zlib.crc32(self.key))
+        cmd_str = "echo " + CHECKPOINT_STATS_STR + " | nc " + host + " " + port + "| grep repli-" + ("%X" % zlib.crc32(self.key))
         statp = subprocess.Popen([cmd_str], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
         (statout, staterr) = statp.communicate()
         if (statout != ''):
@@ -298,10 +293,29 @@ class Migrator(threading.Thread):
 
         return 0
 
+    def set_vbucket_state(self, host, vblist, state):
+        errmsg = ''
+
+        for vb in vblist:
+            vbucketctlp = subprocess.Popen([MBVBUCKETCTL_PATH, host, "set", str(vb), state], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            (vbout, vberr) = vbucketctlp.communicate()
+            if (vberr != ''):
+                logging.warning('Error marking vbucket %d as %s on %s. error; [%s]', vb, state, host, vberr)
+                errmsg = errmsg + " Error marking vbucket " + str(vb) + " as " + state + " on " + host
+         
+        if (errmsg != ''):
+            err = create_error(host, '', vblist, errmsg)
+            errqueue.put(err)
+            return 1
+
+        return 0
+
+
+
     def get_vb_items(self, addr):
         vb_items = {}
         (host, port) = addr.split(':')
-        vb_cmd = "echo stats vbucket | nc " + host + " " +  port
+        vb_cmd = "echo " + VBUCKET_STATS_STR + " | nc " + host + " " +  port
         vbp = subprocess.Popen([vb_cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
         (vbout, vberr) = vbp.communicate()
         if (vbout == '' or vberr != ''):
@@ -342,9 +356,6 @@ class Migrator(threading.Thread):
             self.vbm_items = new_vbm_items
             return True
 
-        # TODO Remove!
-        logging.debug("Self items **" + str(self.vbm_items) + "** new items ** " + str(new_vbm_items) + "**" + " vblist " + str(vblist))
-
         retval = False
         for vb in vblist:
             try:
@@ -375,7 +386,7 @@ class Migrator(threading.Thread):
         new_replica_items = self.get_vb_items(dest)
     
         if (len(new_master_items) == 0 or len(new_replica_items) == 0):
-            return False
+            return True
 
         if (len(self.master_items) == 0):
             self.master_items = new_master_items
@@ -396,7 +407,7 @@ class Migrator(threading.Thread):
                 break
             
             master_activity = False
-            if (abs(new_master_count - old_master_count) > ACTIVITY_DIFF):
+            if (new_master_count != old_master_count):
                 master_activity = True
 
             if (master_activity == True):
@@ -416,16 +427,27 @@ class Migrator(threading.Thread):
 
     def run(self):
         try:
-            if (self.setup_vbuckets() != 0):
+            row = self.mm.get(self.key)
+            source = row.get('source')
+            dest = row.get('destination')
+            vblist = row.get('vblist')
+
+            # Mark vbucket as active on master
+            if (self.set_vbucket_state(source, vblist, "active") != 0):
                 return
 
-            row = self.mm.get(self.key)
-            dest = row.get('destination')
             if (dest == ''):
                 logging.info('Empty destination for key %s, vbucket list %s, so no replication to be done', self.key, row.get('vblist'))
                 return 
 
+            # Mark vbucket as replica on slave            
+            if (self.set_vbucket_state(dest, vblist, "replica") != 0):
+                self.set_vbucket_state(source, vblist, "dead")
+                return
+
             if (self.start_vbm() != 0):
+                self.set_vbucket_state(source, vblist, "dead")
+                self.set_vbucket_state(dest, vblist, "dead")
                 return
 
             cnt = 0;
@@ -438,7 +460,9 @@ class Migrator(threading.Thread):
                         time.sleep(1)
                         restart_vbm = False
 
-                    if (self.setup_vbuckets() != 0):       # Doing this again because VBM might have died because the remote MB died. 
+                    # Mark vbucket as replica on slave            
+                    # (Doing this again because VBM might have died because the remote MB died.)
+                    if (self.set_vbucket_state(dest, vblist, "replica") != 0):
                         time.sleep(10)                      # Some time before you retry
                         continue;
 
@@ -456,14 +480,16 @@ class Migrator(threading.Thread):
         except Exception, e:
             logging.warning('Exiting thread %s because of exception: [%s]', self.key, str(e))
 
+        # Marking all vbuckets as dead here. The next thread to take it up will mark these as active. 
+        # (Doing this here to handle vbuckets that get "moved"
+        self.set_vbucket_state(source, vblist, "dead")
+        self.set_vbucket_state(dest, vblist, "dead")
         # Stop - kill the VBM and return
         logging.info('Stop request for key %s, will kill the vbucket migrator (pid %d)', self.key, self.vbmp.pid)
         os.kill(self.vbmp.pid, signal.SIGTERM)
 
     def join(self, timeout=None):
         self.stop.set()
-        #self.stop = 1
-        #threading.Thread.join(self,timeout)
         super(Migrator, self).join(timeout)
 
 class SocketWrapper:
@@ -515,6 +541,9 @@ class SocketWrapper:
                 self.s.close() 
             return message                
 
+    def settimeout(self, t):
+        self.s.settimeout(t)
+
 def read_command(sock):
     """Receive from the socket and parse to find command name"""
 
@@ -565,7 +594,7 @@ def get_mb_vblist(port):
     replica_list = []
     host = "127.0.0.1"
     # Get checkpoint stats from the membase. If the tap is registered, it will be listed in the stats
-    vbuckets_cmd = "echo stats vbucket | nc " + host + " " + str(port)
+    vbuckets_cmd = "echo " + VBUCKET_STATS_STR + " | nc " + host + " " + str(port)
     vbp = subprocess.Popen([vbuckets_cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
     (statout, staterr) = vbp.communicate()
     if (statout == ''):
@@ -584,10 +613,8 @@ def get_mb_vblist(port):
                  
 def handle_init_cmd(cmd):                 
     # Read disk configuration
-    #disk_list_cmd = "df -h | grep sda"
-    #disk_count_cmd = "ls -ld /data_*/membase  | wc -l"	
     global mb_host, mb_port
-    disk_count_cmd = "echo stats kvstore | nc " + mb_host + " " + str(mb_port) + " | grep \"status online\" | wc -l"
+    disk_count_cmd = "echo " + KVSTORE_STATS_STR + " | nc " + mb_host + " " + str(mb_port) + " | grep \"status online\" | wc -l"
     dlp = subprocess.Popen([disk_count_cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
     (dlout, dlerr) = dlp.communicate()
     if (dlout == '' or dlerr != ''):
@@ -699,6 +726,7 @@ if __name__ == '__main__':
                     vbs_sock.send_data(init_resp_str, len(init_resp_str))
                 elif (cmd_name == CONFIG_CMD_STR):
                     config_resp_str = mm.handle_new_config(decoded_cmd, ifaces)
+                    vbs_sock.settimeout(heartbeat_interval)
                     vbs_sock.send_data(config_resp_str, len(config_resp_str))
                 else:
                     #error
