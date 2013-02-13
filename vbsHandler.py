@@ -6,7 +6,7 @@ import errno
 import time
 
 from connHandler import *
-from mcsConstants import *
+from vbaConstants import *
 from logger import *
 from asyncon import *
 
@@ -56,7 +56,7 @@ class VBSHandler(AsynConDispatcher):
 
         self.rbuf = ""
         self.wbuf = ""
-        self.buffer_size = 4096 
+        self.buffer_size = VBS_BUFFER_SIZE
         self.gotSize = False
         self.totSize = 0
         self.set_flags = False

@@ -18,8 +18,9 @@ import zlib
 import re
 import getopt
 import socket, IN
-import logging
+from logger import *
 
+Log = getLogger()
 INIT_CMD_STR = "INIT"
 CONFIG_CMD_STR = "CONFIG"
 HEARTBEAT_CMD_STR = "Alive"
@@ -104,10 +105,10 @@ class MigrationManager:
 
         config_data = config_cmd.get('Data')
         if (config_data == None or len(config_data) == 0):
-            logging.warning('VBucket map missing in config')
+            Log.warning('VBucket map missing in config')
             return json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":["No Vbucket map in config"]})
 
-        logging.debug('New config from VBS: %s', str(config_data))
+        Log.debug('New config from VBS: %s', str(config_data))
 
         # Create a new table(new_vb_table) from the config data
         # The config data is of the form:
@@ -150,7 +151,7 @@ class MigrationManager:
                 if k in self.vbtable and self.vbtable[k].get('migrator').isAlive():
                     if (self.vbtable[k]['vblist'] != v['vblist']):
                         # Kill the existing VBM and start a new one
-                        logging.debug('Vbucket list changed for row [%s] from %s to %s, will restart the vbucket migrator', k, v['vblist'], self.vbtable[k]['vblist'])
+                        Log.debug('Vbucket list changed for row [%s] from %s to %s, will restart the vbucket migrator', k, v['vblist'], self.vbtable[k]['vblist'])
                         self.end_migrator(k)
                         new_migrators.append(self.create_migrator(k,v))
                     else:
@@ -158,7 +159,7 @@ class MigrationManager:
                         v['migrator'] =  self.vbtable[k].get('migrator')
                 else:
                     # Start a new VBM
-                    logging.debug('Starting a new vbucket migrator for row [%s] with vbucket list %s', k, v['vblist'])
+                    Log.debug('Starting a new vbucket migrator for row [%s] with vbucket list %s', k, v['vblist'])
                     new_migrators.append(self.create_migrator(k,v))
 
                 # Iterate over the old table and:
@@ -166,16 +167,16 @@ class MigrationManager:
                 for (k, v) in self.vbtable.iteritems():
                     if k not in new_vb_table:
                         # Kill the VBM for the row
-                        logging.debug('Killing vbucket migrator for row [%s] with vbucket list %s', k, v['vblist'])
+                        Log.debug('Killing vbucket migrator for row [%s] with vbucket list %s', k, v['vblist'])
                         self.end_migrator(k)
 
         self.vbtable = new_vb_table
         # Start threads for the new migrators, now that we have the new_vb_table ready
         for nm in new_migrators:
             nm.start()
-        logging.info("New table after parsing config: ")
+        Log.info("New table after parsing config: ")
         for (k, v) in new_vb_table.iteritems():
-            logging.info(str(v))
+            Log.info(str(v))
 
         if (len(err_details)):
             return json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":err_details})
@@ -223,7 +224,7 @@ class Migrator(threading.Thread):
                 regp = subprocess.Popen(["python", TAP_REGISTRATION_SCRIPT_PATH, "-h", source, "-r", tapname], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 (regout, regerr) = regp.communicate()
                 if (regout != '' or regerr != ''):  # TODO go through the reg script and see what the error strings can be
-                    logging.warning('Error registering the tap, stdout: [%s], stderr: [%s]',regout, regerr)
+                    Log.warning('Error registering the tap, stdout: [%s], stderr: [%s]',regout, regerr)
                     errmsg = "Error registering the tap, stdout: [" + regout + "], stderr: [" + regerr + "]"
                     err = create_error(source, dest, vblist, errmsg)
                     errqueue.put(err)
@@ -235,13 +236,13 @@ class Migrator(threading.Thread):
                 self.vbmp = subprocess.Popen(["sudo", VBUCKET_MIGRATOR_PATH, "-h", source, "-b", vblist_str, "-d", dest, "-N", tapname, "-A", "-v", "-r"], stdout=subprocess.PIPE, stderr=subprocess.PIPE) 
             else:
                 self.vbmp = subprocess.Popen(["sudo", VBUCKET_MIGRATOR_PATH, "-h", source, "-b", vblist_str, "-d", dest, "-N", tapname, "-A", "-i", interface, "-v", "-r"], stdout=subprocess.PIPE, stderr=subprocess.PIPE) 
-            logging.debug('Started VBM with pid %d interface %s', self.vbmp.pid, interface)
+            Log.debug('Started VBM with pid %d interface %s', self.vbmp.pid, interface)
             # Wait for a couple of seconds to see if all is well # TODO Something better?
             start = time.time()
             while (time.time() - start < 2): 
                 if (self.vbmp.poll() != None):      # means the VBM has exited
                     (vbmout, vbmerr) = self.vbmp.communicate()
-                    logging.warning('Error starting the VBM between %s and %s for vbuckets %s on interface %s. Error: [%s]', source, dest, vblist_str, interface, vbmerr)
+                    Log.warning('Error starting the VBM between %s and %s for vbuckets %s on interface %s. Error: [%s]', source, dest, vblist_str, interface, vbmerr)
                     errmsg = "Error starting the VBM between " + source + " and " + dest + " for vbuckets [" + vblist_str + "] on interface " + interface + ". Error = [" + str(vbmerr) + "]"
                     err = create_error(source, dest, vblist, errmsg)
                     errqueue.put(err)
@@ -250,7 +251,7 @@ class Migrator(threading.Thread):
                     time.sleep(0.5)
 
         except KeyError:
-            logging.warning('Unable to find key %s in vb table while starting VBM', self.key)
+            Log.warning('Unable to find key %s in vb table while starting VBM', self.key)
             errmsg = "Unable to find key " + self.key + " in mm vbtable"
             err = create_error(source, dest, vblist, errmsg)
             errqueue.put(err)
@@ -271,7 +272,7 @@ class Migrator(threading.Thread):
                 master_vbucketctlp = subprocess.Popen([MBVBUCKETCTL_PATH, source, "set", str(vb), "active"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 (vbout, vberr) = master_vbucketctlp.communicate()
                 if (vberr != ''):
-                    logging.warning('Error marking vbucket %d as active on %s. error; [%s]', vb, source, vberr)
+                    Log.warning('Error marking vbucket %d as active on %s. error; [%s]', vb, source, vberr)
                     errmsg = errmsg + " Error marking vbucket " + str(vb) + " as active on " + source
              
                 # Mark vbucket as replica on slave            
@@ -279,11 +280,11 @@ class Migrator(threading.Thread):
                     slave_vbucketctlp = subprocess.Popen([MBVBUCKETCTL_PATH, dest, "set", str(vb), "replica"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     (vbout, vberr) = slave_vbucketctlp.communicate()
                     if (vberr != ''):
-                        logging.warning('Error marking vbucket %d as replica on %s. error: [%s]', vb, dest, vberr)
+                        Log.warning('Error marking vbucket %d as replica on %s. error: [%s]', vb, dest, vberr)
                         errmsg = errmsg + " Error marking vbucket " + str(vb) + " as replica on " + dest
 
         except KeyError:
-            logging.warning('Unable to find key %s in vb table while setting up vbuckets', self.key)
+            Log.warning('Unable to find key %s in vb table while setting up vbuckets', self.key)
             errmsg = "Unable to find key " + self.key + " in mm vbtable"
 
         if (errmsg != ''):
@@ -300,7 +301,7 @@ class Migrator(threading.Thread):
             vbucketctlp = subprocess.Popen([MBVBUCKETCTL_PATH, host, "set", str(vb), state], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             (vbout, vberr) = vbucketctlp.communicate()
             if (vberr != ''):
-                logging.warning('Error marking vbucket %d as %s on %s. error; [%s]', vb, state, host, vberr)
+                Log.warning('Error marking vbucket %d as %s on %s. error; [%s]', vb, state, host, vberr)
                 errmsg = errmsg + " Error marking vbucket " + str(vb) + " as " + state + " on " + host
          
         if (errmsg != ''):
@@ -319,7 +320,7 @@ class Migrator(threading.Thread):
         vbp = subprocess.Popen([vb_cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
         (vbout, vberr) = vbp.communicate()
         if (vbout == '' or vberr != ''):
-            logging.warning('Error getting vbucket count for host %s, error: [%s]', addr, vberr)
+            Log.warning('Error getting vbucket count for host %s, error: [%s]', addr, vberr)
         for line in vbout.splitlines():
             m = re.match("STAT vb_(\d+) \w+ curr_items (\d+) kvstore .*", line)
             if (m != None):
@@ -337,7 +338,7 @@ class Migrator(threading.Thread):
         vbmp = subprocess.Popen([vbm_stats_cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
         (vbmout, vbmerr) = vbmp.communicate()
         if (vbmout == '' or vbmerr != ''):
-            logging.warning('Error getting stats from the vbucket migrator on socket %s. Error: [%s]', vbm_stats_sock, vbmerr)
+            Log.warning('Error getting stats from the vbucket migrator on socket %s. Error: [%s]', vbm_stats_sock, vbmerr)
             return False
 
         new_vbm_items = {}
@@ -349,7 +350,7 @@ class Migrator(threading.Thread):
                 sent = int(m.group(3))
                 new_vbm_items[vb] = (rcvd, sent)
             else:
-                logging.warning('vbucket migrator stats output [%s] not in expected format', line)
+                Log.warning('vbucket migrator stats output [%s] not in expected format', line)
                 return False
 
         if (len(self.vbm_items) == 0):
@@ -369,7 +370,7 @@ class Migrator(threading.Thread):
                 retval = True
                 break
             else:
-                logging.debug('No progress for vbucket %d', vb)
+                Log.debug('No progress for vbucket %d', vb)
 
         self.vbm_items = new_vbm_items
         return retval
@@ -402,7 +403,7 @@ class Migrator(threading.Thread):
                 old_replica_count = self.replica_items.get(vb)
                 new_replica_count = new_replica_items.get(vb)
             except KeyError:
-                logging.warning('Error finding item count for vbucket %d', vb)
+                Log.warning('Error finding item count for vbucket %d', vb)
                 retval = False
                 break
             
@@ -414,11 +415,11 @@ class Migrator(threading.Thread):
                 if ((new_master_count - new_replica_count) > DEFAULT_REPLICATION_DIFF):
                     # Check if the VBM is stuck 
                     if (vbm_progress == False):
-                        logging.warning('Vbucketmigrator seems to be stuck, will restart it')
+                        Log.warning('Vbucketmigrator seems to be stuck, will restart it')
                         retval = False
                         break
                     else:
-                        logging.warning('Replication lagging behind for vbucket %d on destination %s. Count on master %d, count on replica %d', vb, dest, new_master_count, new_replica_count)
+                        Log.warning('Replication lagging behind for vbucket %d on destination %s. Count on master %d, count on replica %d', vb, dest, new_master_count, new_replica_count)
 
         self.master_items = new_master_items
         self.replica_items = new_replica_items
@@ -437,7 +438,7 @@ class Migrator(threading.Thread):
                 return
 
             if (dest == ''):
-                logging.info('Empty destination for key %s, vbucket list %s, so no replication to be done', self.key, row.get('vblist'))
+                Log.info('Empty destination for key %s, vbucket list %s, so no replication to be done', self.key, row.get('vblist'))
                 return 
 
             # Mark vbucket as replica on slave            
@@ -478,14 +479,14 @@ class Migrator(threading.Thread):
                     if (self.check_replication_status() == False):
                         restart_vbm = True
         except Exception, e:
-            logging.warning('Exiting thread %s because of exception: [%s]', self.key, str(e))
+            Log.warning('Exiting thread %s because of exception: [%s]', self.key, str(e))
 
         # Marking all vbuckets as dead here. The next thread to take it up will mark these as active. 
         # (Doing this here to handle vbuckets that get "moved"
         self.set_vbucket_state(source, vblist, "dead")
         self.set_vbucket_state(dest, vblist, "dead")
         # Stop - kill the VBM and return
-        logging.info('Stop request for key %s, will kill the vbucket migrator (pid %d)', self.key, self.vbmp.pid)
+        Log.info('Stop request for key %s, will kill the vbucket migrator (pid %d)', self.key, self.vbmp.pid)
         os.kill(self.vbmp.pid, signal.SIGTERM)
 
     def join(self, timeout=None):
@@ -578,7 +579,7 @@ def get_ifaces():
                 if (m != None):
                     up_ifaces[iname] = m.group(1).strip()
 
-    logging.debug('Interface info: %s', str(up_ifaces)) 
+    Log.debug('Interface info: %s', str(up_ifaces)) 
     return up_ifaces
 
 def get_iface_for_ip(ip, ifaces):
@@ -618,7 +619,7 @@ def handle_init_cmd(cmd):
     dlp = subprocess.Popen([disk_count_cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
     (dlout, dlerr) = dlp.communicate()
     if (dlout == '' or dlerr != ''):
-        logging.warning('No kvstores are online. Check if Membase is up')
+        Log.warning('No kvstores are online. Check if Membase is up')
         disk_count = 0
     else:
         # Read the bad disk file
@@ -677,7 +678,7 @@ if __name__ == '__main__':
     pidfile.write(str(mypid))
     pidfile.close()
 
-    logging.basicConfig(filename='/var/log/vba.log', format='%(asctime)s %(levelname)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.DEBUG)
+    #Log.basicConfig(filename='/var/log/vba.log', format='%(asctime)s %(levelname)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=Log.DEBUG)
     errqueue = Queue.Queue()
     heartbeat_interval = DEFAULT_HEARTBEAT_INTERVAL
     last_heartbeat = 0
@@ -689,16 +690,16 @@ if __name__ == '__main__':
     if (len(opts) != 0):
         parse_options(opts)
     vbs_port = int(vbs_port)
-    logging.info('Vbucket Agent starting, Vbucket Server at %s:%d ', vbs_host, vbs_port)
+    Log.info('Vbucket Agent starting, Vbucket Server at %s:%d ', vbs_host, vbs_port)
 
     # get membase info - host, port and PID
     mb_host = DEFAULT_MB_HOST
     mb_port = check_mb_status()
     if (mb_port == 0):
-        logging.warning('Membase not up on the machine, will exit')
+        Log.warning('Membase not up on the machine, will exit')
         sys.exit()
     mb_pid = get_mb_pid()
-    logging.info('Membase at %s:%d, membase PID %s', mb_host, mb_port, mb_pid)
+    Log.info('Membase at %s:%d, membase PID %s', mb_host, mb_port, mb_pid)
 
     mm = MigrationManager(vbs_host, vbs_port)
 
@@ -710,7 +711,7 @@ if __name__ == '__main__':
         if (connected == False):
             errormsg = vbs_sock.connect()
             if (errormsg != ''):
-                logging.warning('Could not open socket to VBS at %s:%d: [%s]', vbs_host, vbs_port, errormsg)
+                Log.warning('Could not open socket to VBS at %s:%d: [%s]', vbs_host, vbs_port, errormsg)
                 time.sleep(5)
                 continue                            
                     
@@ -730,7 +731,7 @@ if __name__ == '__main__':
                     vbs_sock.send_data(config_resp_str, len(config_resp_str))
                 else:
                     #error
-                    logging.warning('Unknown command from VBS: %s', cmd_name)
+                    Log.warning('Unknown command from VBS: %s', cmd_name)
                     unknown_cmd_str = json.dumps(UNKNOWN_CMD_JSON)
                     vbs_sock.send_data(unknown_cmd_str, len(unknown_cmd_str))
 
@@ -747,14 +748,14 @@ if __name__ == '__main__':
 
             new_mb_pid = get_mb_pid()
             if (new_mb_pid != mb_pid):
-                logging.info('Membase seems to have restarted, exiting')
+                Log.info('Membase seems to have restarted, exiting')
                 sys.exit()
 
         except socket.error, (value,message):
-            logging.warning('Got socket error [%s]', message)
+            Log.warning('Got socket error [%s]', message)
             connected = False
         except RuntimeError, (message):
-            logging.warning('Got socket runtime error [%s]', str(message))
+            Log.warning('Got socket runtime error [%s]', str(message))
             connected = False
 
 
