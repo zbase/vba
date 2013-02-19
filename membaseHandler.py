@@ -103,6 +103,7 @@ class MembaseHandler(AsynConDispatcher):
         self.ipStr += ("",":"+str(port))[port != None]
         if not self.map is None:
             self.map[self.ip+":"+self.port] = self
+        self.enable_timeout()
 
     def handle_connect(self):
         Log.debug("Connected %s:%s" %(self.ip, self.port))
@@ -170,12 +171,23 @@ class MembaseHandler(AsynConDispatcher):
     def send_stats(self):
         self.write_data(MembaseHandler.MEMBASE_STATS_CMD)
 
+    def set_read(self):
+        status = True
+        try:
+            self.enable_read()
+        except:
+            Log.error("Error setting read event!")
+            status = False
+            self.handle_error()
+        return status
+
     def handle_write(self):
         try:
             if len(self.wbuf) > 0:
                 sent = self.send(self.wbuf)
                 self.wbuf = self.wbuf[sent:]
                 self.send_count += 1
+                self.set_read()
             else:
                 Log.debug("Write on empty buffer!")
         except socket.error, why:
@@ -187,9 +199,13 @@ class MembaseHandler(AsynConDispatcher):
         self.send_count = 0
         self.recv_count = 0
         self.retry_count -= 1
-        self.socket.close()
+        if self.retry_count < 0:
+            self.failCallback(self)
+            return
+        self.destroy()
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
         self.connect((self.ip, int(self.port)))
+        self.enable_timeout()
 
     def health(self):
         if self.connected and (self.retry_count > 0) and ((self.send_count - self.recv_count) < MembaseHandler.ERROR_THRESHOLD):
@@ -211,7 +227,6 @@ class MembaseHandler(AsynConDispatcher):
                 if (self.remote_item_count >= 0) and (self.local_item_count > 0)  and ((self.remote_item_count - self.local_item_count) < MembaseHandler.CUR_ITEMS_DELTA):
                     self.half_baked = False
                     Log.info("Slave is fully functional")
-
                 if not self.half_baked:
                     #Switch to command type VERSION
                     Log.info("Switching to command type VERSION")
@@ -221,6 +236,7 @@ class MembaseHandler(AsynConDispatcher):
                     self.send_stats()
             else:
                 self.send_version()
+            self.enable_timeout()
         elif con_health == MembaseHandler.RECONNECT:
             self.reconnect()
         else:

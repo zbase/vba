@@ -34,6 +34,7 @@ class VBSManager:
         self.connect()
 
     def response_handler(self, obj, resp_str):
+        print("Response handler with %s" %resp_str)
         Log.info("Response handler with %s" %resp_str)
         try:
             resp = json.loads(resp_str)
@@ -44,13 +45,14 @@ class VBSManager:
             Log.error("No response from VBS")
             return
         if resp["Cmd"] == "CONFIG":
-            data_obj = resp["Data"]
+            print json.dumps(resp)
+            """data_obj = resp["Data"]
             updatedVolatileList = data_obj["serverList"]
             newVolatileList = [ip for ip in updatedVolatileList if ip != "0.0.0.0:11211"]
             hb_interval = resp["HeartBeatTime"]
             self.vbs_con.set_timeout(hb_interval)
             self.send_ok()
-            self.handle_config(newVolatileList)
+            self.handle_config(newVolatileList)"""
         elif resp["Cmd"] == "INIT":
             self.handle_init()
 
@@ -59,7 +61,7 @@ class VBSManager:
         self.send_message(resp_str)
 
     def handle_init(self):
-        resp_str = json.dumps({"Agent":"MOXI"})
+        resp_str = json.dumps({"Agent":"VBA"})
         self.send_message(resp_str)
 
     def report_down_node(self, ip):
