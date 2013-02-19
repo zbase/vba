@@ -1,25 +1,25 @@
 import os, sys
 PARENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(os.path.dirname(PARENT_DIR))
+sys.path.append(PARENT_DIR)
+print "Importing from %s" %PARENT_DIR
 
 from logger import *
 from asyncon import *
-from vbsHandler import *
+from message import *
+from vbsManager import *
 
 as_mgr = AsynCon()
-vbs_port = 6666
+vbs_port = 14000
 vbs_host = "127.0.0.1"
-
-def handle_vbs_response(con, obj):
-    Log.debug("Got response from vbs: %s" %obj)
+HEARTBEAT_CMD = VBSMessage.getMsg('{"Cmd":"ALIVE"}')
 
 if __name__ == '__main__':
-    params = {"ip":vbs_host, "port":vbs_port, "callback":handle_vbs_response, 'mgr':as_mgr, "alive_msg": HEARTBEAT_CMD}
-    vbsCon = VBSHandler(params)
-    try:
-        Log.info("Starting VBA")
-        as_mgr.loop()
-        Log.info("VBA Exitting")
-    except Exception, e:
-        Log.error("Exiting due to Exception %s" %why)
-        os._exit(0)
+    vbsManager = VBSManager(vbs_host, vbs_port, as_mgr)
+    while True:
+        try:
+            print("Starting VBA")
+            as_mgr.loop()
+            print "VBA async loop exit"
+        except Exception, why:
+            Log.error("Exiting due to Exception %s" %why)
+            os._exit(0)

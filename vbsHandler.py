@@ -5,7 +5,6 @@ import struct
 import errno
 import time
 
-from connHandler import *
 from vbaConstants import *
 from logger import *
 from asyncon import *
@@ -66,6 +65,8 @@ class VBSHandler(AsynConDispatcher):
 
         if(params.has_key('addr')):
             self.addr = params['addr']
+        else:
+            self.addr = (self.ip, port)
 
         #Creates non blocking socket
         if self.addr is not None:
