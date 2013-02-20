@@ -90,7 +90,6 @@ class VBSHandler(AsynConDispatcher):
 
     def handle_connect(self):
         self.connected = True
-        self.set_read()
 
     def isConnected(self):
         return self.connected
@@ -132,8 +131,8 @@ class VBSHandler(AsynConDispatcher):
                 if not self.gotSize:
                     if len(self.rbuf) > self.MIN_PACK_SIZE:
                         self.totSize, = struct.unpack("!I", self.rbuf[:self.MIN_PACK_SIZE])
-                        #self.totSize = (self.rbuf[:self.MIN_PACK_SIZE])
                         Log.info("Size: %s", str(self.totSize))
+                        print "Got size: %d" %self.totSize
                         self.totSize += self.MIN_PACK_SIZE
                         self.gotSize = True
                 if self.gotSize and len(self.rbuf) < self.totSize:

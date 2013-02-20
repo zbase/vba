@@ -9,11 +9,13 @@ class VBSManager:
     CONFIG  = "CONFIG"
     INIT    = "INIT"
 
-    def __init__(self, vbs_ip, vbs_port, as_mgr):
+    def __init__(self, vbs_ip, vbs_port, as_mgr, mig_mgr=None, mb_mgr=None):
         self.as_mgr = as_mgr
         self.VBS_SERVER_NAME = vbs_ip
         self.VBS_SERVER_PORT = vbs_port
         self.VBS_SERVER_ADDR = (self.VBS_SERVER_NAME, self.VBS_SERVER_PORT)
+        self.migration_manager = mig_mgr
+        self.membase_manager = mb_mgr
         Log.info("Server name: %s : %d" %(self.VBS_SERVER_NAME, self.VBS_SERVER_PORT))
         self.connect()
 
@@ -34,7 +36,6 @@ class VBSManager:
         self.connect()
 
     def response_handler(self, obj, resp_str):
-        print("Response handler with %s" %resp_str)
         Log.info("Response handler with %s" %resp_str)
         try:
             resp = json.loads(resp_str)
@@ -45,13 +46,22 @@ class VBSManager:
             Log.error("No response from VBS")
             return
         if resp["Cmd"] == "CONFIG":
-            print json.dumps(resp)
+            print("Response handler with %s" %resp_str)
+            valid_config = mm.handle_new_config(resp, ifaces)
+            vbs_sock.send_data(config_resp_str, len(config_resp_str))
+            if valid_config:
+                hb_interval = resp["HeartBeatTime"]
+                self.vbs_con.set_timeout(hb_interval)
+                self.membase_manager.handle_config(resp)
+
+                self.send_ok()
+            else:
+                self.send_error()
             """data_obj = resp["Data"]
             updatedVolatileList = data_obj["serverList"]
             newVolatileList = [ip for ip in updatedVolatileList if ip != "0.0.0.0:11211"]
             hb_interval = resp["HeartBeatTime"]
             self.vbs_con.set_timeout(hb_interval)
-            self.send_ok()
             self.handle_config(newVolatileList)"""
         elif resp["Cmd"] == "INIT":
             self.handle_init()
@@ -62,6 +72,10 @@ class VBSManager:
 
     def handle_init(self):
         resp_str = json.dumps({"Agent":"VBA"})
+        self.send_message(resp_str)
+
+    def send_error(self):
+        resp_str = json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":err_details})
         self.send_message(resp_str)
 
     def report_down_node(self, ip):

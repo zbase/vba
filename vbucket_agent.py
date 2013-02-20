@@ -19,6 +19,10 @@ import re
 import getopt
 import socket, IN
 from logger import *
+from asyncon import *
+from message import *
+from vbsManager import *
+from mbManager import *
 
 Log = getLogger()
 INIT_CMD_STR = "INIT"
@@ -179,9 +183,11 @@ class MigrationManager:
             Log.info(str(v))
 
         if (len(err_details)):
-            return json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":err_details})
+            return False
+            #return json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":err_details})
         else:
-            return json.dumps({"Cmd":"Config", "Status":"OK"})
+            return True
+            #return json.dumps({"Cmd":"Config", "Status":"OK"})
 
     def get(self, key):
         v = self.vbtable[key]
@@ -691,6 +697,7 @@ if __name__ == '__main__':
         parse_options(opts)
     vbs_port = int(vbs_port)
     Log.info('Vbucket Agent starting, Vbucket Server at %s:%d ', vbs_host, vbs_port)
+    as_mgr = AsynCon()
 
     # get membase info - host, port and PID
     mb_host = DEFAULT_MB_HOST
@@ -702,8 +709,10 @@ if __name__ == '__main__':
     Log.info('Membase at %s:%d, membase PID %s', mb_host, mb_port, mb_pid)
 
     mm = MigrationManager(vbs_host, vbs_port)
+    mb_mgr = MembaseManager() #TODO
+    vbsManager = VBSManager(vbs_host, vbs_port, as_mgr, mm)
 
-    vbs_sock = SocketWrapper(vbs_host, vbs_port)
+    """vbs_sock = SocketWrapper(vbs_host, vbs_port)
     connected = False
     # listen for commands
     while 1:
@@ -757,5 +766,5 @@ if __name__ == '__main__':
         except RuntimeError, (message):
             Log.warning('Got socket runtime error [%s]', str(message))
             connected = False
-
+    """
 
