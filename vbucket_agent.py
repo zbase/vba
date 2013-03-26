@@ -101,6 +101,14 @@ class MigrationManager:
         value['vblist'] = vblist
         return key, value
 
+    def get_iface_for_ip(self, ip, ifaces):
+        ret_iface = ''
+        for iface in ifaces:
+            if ip == iface[1]:
+                ret_iface = iface[0]
+                break
+        return ret_iface
+
     def handle_new_config(self, config_cmd, ifaces):
         new_vb_table = {}
         global heartbeat_interval
@@ -135,7 +143,7 @@ class MigrationManager:
             try:
                 (key, value) = self.parse_config_row(row)
                 (ip,port) = value['source'].split(':')
-                value['interface'] = get_iface_for_ip(ip, ifaces)
+                value['interface'] = self.get_iface_for_ip(ip, ifaces)
                 new_vb_table[key] = value
             except RuntimeError, (message):
                 err_details.append(message)
@@ -709,8 +717,11 @@ if __name__ == '__main__':
     Log.info('Membase at %s:%d, membase PID %s', mb_host, mb_port, mb_pid)
 
     mm = MigrationManager(vbs_host, vbs_port)
-    mb_mgr = MembaseManager() #TODO
-    vbsManager = VBSManager(vbs_host, vbs_port, as_mgr, mm)
+    mb_mgr = MembaseManager(as_mgr) #TODO
+    vbsManager = VBSManager(vbs_host, vbs_port, as_mgr, mm, mb_mgr, errqueue)
+    Log.info("Starting async loop")
+    as_mgr.loop()
+    Log.info("Exitting")
 
     """vbs_sock = SocketWrapper(vbs_host, vbs_port)
     connected = False

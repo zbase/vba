@@ -28,11 +28,14 @@ class VBSHandler(AsynConDispatcher):
         port = None
         self._map = None
         mgr = None
+        self.timeout_msg = ""
 
         if(params.has_key('ip')):
             self.ip = params['ip']
         if(params.has_key('failCallbackParams')):
             self.failCallbackParams = params['failCallbackParams']
+        if(params.has_key('failCallback')):
+            self.failCallback = params['failCallback']
         if(params.has_key('callback')):
             self.callback = params['callback']
         if(params.has_key('callbackParams')):
@@ -110,43 +113,38 @@ class VBSHandler(AsynConDispatcher):
         return status
 
     def handle_read(self):
-        #try:
-            while True:
-                try:
-                    self.rbuf += self.recv(self.buffer_size)
-                    Log.debug(self.rbuf)
-                except socket.error, why:
-                    ecode = why[0]
-                    if ecode == errno.EAGAIN:
-                        break
-                    else:
-                        Log.error("Read event error %s" % why)
-                        self.handle_error()
-                        return
-            if not self.set_read():
-                Log.debug("Error setting read event for %s. Will try reconnecting/switch to local hbm" %self.ip)
-                return
-            self.gotRes = True
-            while len(self.rbuf) > 0:
-                if not self.gotSize:
-                    if len(self.rbuf) > self.MIN_PACK_SIZE:
-                        self.totSize, = struct.unpack("!I", self.rbuf[:self.MIN_PACK_SIZE])
-                        Log.info("Size: %s", str(self.totSize))
-                        print "Got size: %d" %self.totSize
-                        self.totSize += self.MIN_PACK_SIZE
-                        self.gotSize = True
-                if self.gotSize and len(self.rbuf) < self.totSize:
-                    Log.info("returning due to size")
-                    return
+        while True:
+            try:
+                self.rbuf += self.recv(self.buffer_size)
+                Log.debug(self.rbuf)
+            except socket.error, why:
+                ecode = why[0]
+                if ecode == errno.EAGAIN:
+                    break
                 else:
-                    Log.debug("Callback for: %s" %self.rbuf[self.MIN_PACK_SIZE:self.totSize])
-                    self.callback(self, self.rbuf[self.MIN_PACK_SIZE:self.totSize])
-                    self.gotSize = False
-                    self.rbuf = self.rbuf[self.totSize:]
-        #except:
-        #    Log.debug("Error setting read event for %s. Will try reconnecting/switch to local hbm" %self.ip)
-        #    self.handle_error()
-        #    return
+                    Log.error("Read event error %s" % why)
+                    self.handle_error()
+                    return
+        if not self.set_read():
+            Log.debug("Error setting read event for %s." %self.ip)
+            return
+        self.gotRes = True
+        while len(self.rbuf) > 0:
+            if not self.gotSize:
+                if len(self.rbuf) > self.MIN_PACK_SIZE:
+                    self.totSize, = struct.unpack("!I", self.rbuf[:self.MIN_PACK_SIZE])
+                    Log.debug("Size: %s", str(self.totSize))
+                    self.totSize += self.MIN_PACK_SIZE
+                    self.gotSize = True
+            if self.gotSize and len(self.rbuf) < self.totSize:
+                Log.info("returning due to size")
+                return
+            else:
+                command = self.rbuf[self.MIN_PACK_SIZE:self.totSize]
+                Log.debug("Callback for: %s" %command)
+                self.callback(self, command)
+                self.gotSize = False
+                self.rbuf = self.rbuf[self.totSize:]
 
     def handle_timeout(self):
         if not self.connected:
@@ -154,7 +152,11 @@ class VBSHandler(AsynConDispatcher):
             self.handle_error()
         else:
             try:
-                self.send_alive()
+                if len(self.timeout_msg) < 1:
+                    self.send_alive()
+                else:
+                    self.write_data(self.timeout_msg)
+                    self.timeout_msg = ""
                 self.enable_timeout()
             except Exception, why:
                 Log.error("Exception: %s" %(str(why)))

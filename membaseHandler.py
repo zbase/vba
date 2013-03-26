@@ -49,6 +49,7 @@ class MembaseHandler(AsynConDispatcher):
         self.aok_ts = time.time()
         self.read_callback = None
         self.monit_ip = None
+        self.host = None
 
         if(params.has_key('ip')):
             self.ip = params['ip']
@@ -74,6 +75,8 @@ class MembaseHandler(AsynConDispatcher):
         else:
             port = MembaseHandler.MEMBASE_PORT
             self.port = str(MembaseHandler.MEMBASE_PORT)
+
+        self.host = self.ip+":"+self.port
         if(params.has_key('map')):
             self.map = params['map']
         if(params.has_key('mgr')):
@@ -121,6 +124,7 @@ class MembaseHandler(AsynConDispatcher):
         self.reconnect()
 
     def handle_read(self):
+        response = None
         while True:
             try:
                 self.rbuf += self.recv(self.buffer_size)
@@ -134,11 +138,11 @@ class MembaseHandler(AsynConDispatcher):
                     self.handle_error()
                     return
         if self.command_type == MembaseHandler.VERSION_MONITORING:   
-            self.handle_version_read()
+            response = self.handle_version_read()
         else:
-            self.handle_stats_read()
-        if not self.read_callback is None:
-            self.read_callback(self)
+            response = self.handle_stats_read()
+        if ((not response is None) and (not self.read_callback is None)):
+            self.read_callback(self, response)
 
     def handle_stats_read(self):
         if self.rbuf.find(MembaseHandler.STATS_TERM) > 0:
@@ -155,6 +159,8 @@ class MembaseHandler(AsynConDispatcher):
                 self.recv_count += 1
                 if self.local_item_count != -1 and (self.remote_item_count - self.local_item_count) < MembaseHandler.CUR_ITEMS_DELTA:
                     self.half_baked = False
+            return stats_map
+        return None
 
     def handle_version_read(self):
         if self.rbuf.find("VERSION") >= 0:
