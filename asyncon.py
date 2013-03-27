@@ -13,6 +13,7 @@ class AsynCon(object):
     EV_READ = libevent.EV_READ
     EV_WRITE = libevent.EV_WRITE
     EV_TIMEOUT = libevent.EV_TIMEOUT
+    EV_TIMER = 5
 
     def __init__(self):
         self._base = libevent.Base()
@@ -179,6 +180,8 @@ class AsynConDispatcher(object):
         self.read_event.delete()
         self.write_event.delete()
         self.timeout_event.delete()
+        if self.timer_event is not None:
+            self.timer_event.delete()
         self.socket.close()
 
     def enable_read(self):
@@ -211,6 +214,10 @@ class AsynConDispatcher(object):
     def enable_timeout(self):
         self.timeout_event.add(self.timeout)
 
+    def handle_timer_event(self, _, evt):
+        self.handle_timer()
+
+
     def handle_timeout_event(self, evt, fd, what, obj):
         if not self.connected:
             self.log_info('connection not established','warning')
@@ -238,12 +245,18 @@ class AsynConDispatcher(object):
     def handle_accept(self):
         self.log_info('unhandled accept event', 'warning')
 
+    def handle_timer(self):
+        self.log_info('unhandled timer event', 'warning')
+
     def handle_timeout(self):
         self.log_info('unhandled timeout event', 'warning')
 
     def handle_close(self):
         self.log_info('unhandled close event', 'warning')
         self.close()
+
+    def create_timer(self):
+        self.timer_event = libevent.Timer(self._base, self.handle_timer_event, self)
 
     def create_events(self):
         self.write_event = libevent.Event(self._base, self._fileno, AsynCon.EV_WRITE, self.handle_write_event, self)
@@ -260,6 +273,8 @@ class AsynConDispatcher(object):
             self.write_event.add(freq)
         elif what == AsynCon.EV_TIMEOUT:
             self.timeout_event.add(freq)
+        elif what == Asyncon.EV_TIMER and freq is not None:
+            self.timer_event.add(freq)
         else:
             self.log_info("unhandled event add request", "warning")
 
