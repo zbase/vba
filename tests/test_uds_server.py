@@ -1,8 +1,15 @@
 import socket
+import time
 import sys
 import os
+import subprocess
 
 server_address = '/tmp/test_uds'
+
+def get_membase_stats():
+    cmd_str = "echo 'stats' | nc 0 11211 "
+    statp = subprocess.Popen([cmd_str], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True).communicate()[0]
+    return statp
 
 # Make sure the socket does not already exist
 try:
@@ -26,11 +33,14 @@ while True:
     connection, client_address = sock.accept()
     try:
         print >>sys.stderr, 'connection from', client_address
-        data = """key1 TEST1
-key2 TEST2
-"""
+        data = get_membase_stats()
+        print "Sending %s" %data
         connection.sendall(data)
+        time.sleep(2)
+    except Exception, e:
+        print "Error: %s" %e
     finally:
         # Clean up the connection
         connection.close()
         
+

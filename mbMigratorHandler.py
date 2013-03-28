@@ -23,6 +23,8 @@ class MBMigratorHandler(AsynConDispatcher):
         self.last_response_ts = int(time.time())
         self.read_callback = None
         self.rbuf = ""
+        self.buffer_size = 4096
+        self.connected = False
 
         if params.has_key('addr'):
             self.saddr = params['addr']
@@ -40,6 +42,13 @@ class MBMigratorHandler(AsynConDispatcher):
         AsynConDispatcher.__init__(self, None, self.timer, self.mgr)
         self.create_timer()
         self.set_timer()
+
+    def handle_connect(self):
+        Log.debug("Connected")
+        self.connected = True
+
+    def handle_close(self):
+        self.destroy()
     
     def set_timer(self):
         self.timer_event.add(self.timer)
@@ -97,11 +106,6 @@ class MBMigratorHandler(AsynConDispatcher):
                 data = row.split(' ')
                 if len(data) > 2:
                     stats_map[data[1]] = data[2]
-            if stats_map.has_key(MembaseHandler.ITEM_COUNT_KEY):
-                self.remote_item_count = int(stats_map[MembaseHandler.ITEM_COUNT_KEY])
-                self.recv_count += 1
-                if self.local_item_count != -1 and (self.remote_item_count - self.local_item_count) < MembaseHandler.CUR_ITEMS_DELTA:
-                    self.half_baked = False
             return stats_map
         return None
 
