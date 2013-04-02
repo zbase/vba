@@ -4,8 +4,8 @@ sys.path.append(PARENT_DIR)
 
 from mbMigratorHandler import *
 
-name="/tmp/test_uds"
+name="/var/tmp/vbs/vbm.sock.10.36.175.180"
 as_mgr = AsynCon()
-params={"addr":name, "name":"test_name", "timeout":10, "mgr":as_mgr}
+params={"addr":name, "name":name, "timeout":10, "mgr":as_mgr}
 m=MBMigratorHandler(params)
 as_mgr.loop()
