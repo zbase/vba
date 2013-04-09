@@ -177,12 +177,16 @@ class AsynConDispatcher(object):
                 raise
 
     def close(self):
-        self.read_event.delete()
-        self.write_event.delete()
-        self.timeout_event.delete()
+        if self.read_event is not None:
+            self.read_event.delete()
+        if self.write_event is not None:
+            self.write_event.delete()
+        if self.timeout_event is not None:
+            self.timeout_event.delete()
         if self.timer_event is not None:
             self.timer_event.delete()
-        self.socket.close()
+        if self.socket is not None:
+            self.socket.close()
 
     def enable_read(self):
         self.read_event.add()

@@ -8,7 +8,7 @@ def getLogger():
     global Log
 
     if(Log == None):
-        logging.basicConfig(level=logging.ERROR,
+        logging.basicConfig(level=logging.DEBUG,
                             format='%(asctime)s [%(process)d] %(levelname)-8s %(filename)s %(lineno)s %(message)s',
                             datefmt='%a, %d %b %Y %H:%M:%S')
         

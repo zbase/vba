@@ -3,28 +3,47 @@ from asyncon import *
 from message import *
 from vbsManager import *
 
+import utils
+
 #Class to manage monitoring membase nodes
 #Each monitoring agent is an instance of MembaseHandler
-class MembaseManager:
-    def __init__(self, as_mgr):
+class MembaseManager(AsynConDispatcher):
+    INIT, CONFIG, MONITOR, STOP = range(4)
+
+    def __init__(self):
         self.as_mgr = as_mgr
         self.monitoring_host_list = []
         self.monitoring_agents = {}
         self.hb_interval = 30
         self.down_list = []
+        self.state = MembaseManager.INIT
+        self.as_mgr = asyncon.AsynCon()
+        self.timer = 5
+        self.config = None
+        asyncon.AsynConDispatcher.__init__(self, None, self.timer, self.as_mgr)
+        self.create_timer()
+        self.set_timer()
 
-    def array_diff(self, a, b):
-        b = set(b)
-        a = set(a)
-        d_a = [aa for aa in a if aa not in b]
-        d_b = [bb for bb in b if bb not in a]
-        return d_a, d_b
+    def handle_config(self):
+        if (self.config.has_key('HeartBeatTime')):
+            self.hb_interval = self.config['HeartBeatTime']
+            self.timer = self.hb_interval
 
-    def handle_config(self, config):
+        config_data = self.config.get('Data')
+        if (config_data == None or len(config_data) == 0):
+            Log.warning('VBucket map missing in config')
+            return False
+
+        Log.debug('New config from VBS: %s', str(config_data))
+        server_list = []
+        for row in config_data:
+            server_list.append(row['Destination'])
+        
         self.hb_interval = config["HeartBeatTime"]
         server_list = config["Data"]["serverList"]
 
-        servers_added,servers_removed = self.array_diff(server_list, self.monitoring_host_list)
+        servers_added = utils.diff(server_list, self.self.monitoring_host_list)
+        servers_removed = utils.diff(self.monitoring_host_list, server_list)
         
         if len(servers_removed) > 0:
             Log.info("Will stop monitoring %s" %(servers_removed))
@@ -46,7 +65,7 @@ class MembaseManager:
         #create a new MembaseHandler instance
         ip,port = host.split(":",1)
         #Fail command handler and stats read handler set here
-        params = {"ip":ip, "port":port, "failCallback":self.mb_fail_callback, 'mgr':as_mgr, "timeout":self.hb_interval, "type":MembaseHandler.STATS_COMMAND, "callback":self.mb_stats_callback}
+        params = {"ip":ip, "port":port, "failCallback":self.mb_fail_callback, 'mgr':self.as_mgr, "timeout":self.hb_interval, "type":MembaseHandler.STATS_COMMAND, "callback":self.mb_stats_callback}
         mb = MembaseHandler(params)
         self.monitoring_host_list.append(host)
         self.monitoring_agents[host] = {"agent":mb}
@@ -73,3 +92,45 @@ class MembaseManager:
     
     def get_down_list(self):
         return self.down_list
+
+    def set_timer(self):
+        self.timer_event.add(self.timer)
+
+    def set_config(self, config):
+        self.config = config
+        self.state = MembaseManager.CONFIG
+
+    def monitor(self):
+        Log.debug("Monitoring")
+
+    def stop_monitoring(self):
+        for k in self.monitoring_agents.keys():
+            self.monitoring_agents[k].destroy()
+            Log.info("Stopping monitoring %s" %k)
+        self.monitoring_agents = {}
+
+    def handle_states(self):
+        if self.state == MigrationManager.INIT:
+            Log.debug("Init state... waiting")
+        elif self.state == MigrationManager.CONFIG:
+            print "Handle config"
+            self.handle_new_config()
+        elif self.state == MigrationManager.MONITOR:
+            self.monitor()
+        elif self.state == MigrationManager.STOP:
+            self.stop_monitoring()
+        elif self.state == MigrationManager.END:
+            Log.debug("Nothing to do!")
+
+    def handle_timer(self):
+        self.handle_states()
+        self.set_timer()
+
+    def start_monitor_loop(self):
+        self.set_timer()
+        self.as_mgr.loop()
+
+    def run(self):
+        t = threading.Thread(target=self.start_monitor_loop)
+        t.daemon = True
+        t.start()

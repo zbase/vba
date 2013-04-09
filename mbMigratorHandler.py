@@ -4,6 +4,7 @@ import exceptions
 import struct
 import errno
 import time
+import re
 
 from logger import *
 from asyncon import *
@@ -37,8 +38,6 @@ class MBMigratorHandler(AsynConDispatcher):
             self.mgr = params['mgr']
         if params.has_key('readCallback'):
             self.read_callback = params['readCallback']
-
-        (socket.AF_UNIX, socket.SOCK_STREAM)
 
         AsynConDispatcher.__init__(self, None, self.timer, self.mgr)
         self.create_timer()
@@ -156,25 +155,23 @@ class MBMigratorHandler(AsynConDispatcher):
     def handle_stats_read(self):
         #Lines: vb:0 rcvd:6 sent:6
         if len(self.rbuf) > 0:
-            stats_list = []
+            stats = {}
             msg = self.rbuf[:len(self.rbuf)]
+            for line in self.rbuf.splitlines():
+                m = re.match(r'vb:(\d+) rcvd:(\d+) sent:(\d+)', line)
+                if (m != None):
+                    vb = int(m.group(1))
+                    rcvd = int(m.group(2))
+                    sent = int(m.group(3))
+                    stats[vb] = {"sent":sent, "rcvd": rcvd}
             self.rbuf = ""
-            data_arr = msg.split("\n")
-            for row in data_arr:
-                if len(row) < 1:
-                    continue
-                data = row.split(' ')
-                stats_arr = {}
-                for item in data:
-                    stat = item.split(":")
-                    if len(stat) == 2:
-                        stats_arr[stat[0]] = int(stat[1])
-                stats_list.append(stats_arr)
-            if len(stats_list) < 1:
-                return None
-            self.rbuf = ""
-            return stats_list
+            return stats
         return None
+
+    def get_stats(self):
+        stats = self.stats
+        self.stats = None
+        return stats
 
     def handle_fail(self):
         Log.critical("VBucketMigrator %s is not responding. Will try restarting" %self.name)
