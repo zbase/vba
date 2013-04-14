@@ -79,7 +79,9 @@ class MigrationManager(asyncon.AsynConDispatcher):
         config_data = self.config.get('Data')
         if (config_data == None or len(config_data) == 0):
             Log.warning('VBucket map missing in config')
-            return json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":["No Vbucket map in config"]})
+            self.vbs_manager.send_error(json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":["No Vbucket map in config"]}))
+            return
+            #return json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":["No Vbucket map in config"]})
 
         Log.debug('New config from VBS: %s', str(config_data))
 
@@ -147,11 +149,11 @@ class MigrationManager(asyncon.AsynConDispatcher):
         self.state = MigrationManager.MONITOR
 
         if (len(err_details)):
+            self.vbs_manager.send_error(json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":err_details}))
             return False
-            #return json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":err_details})
         else:
+            self.vbs_manager.send_message(json.dumps({"Cmd":"Config", "Status":"OK"}))
             return True
-            #return json.dumps({"Cmd":"Config", "Status":"OK"})
 
     def get(self, key):
         if self.vbtable.has_key(key):
@@ -179,7 +181,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
 
     def monitor(self):
         Log.debug("Monitor err queues and send msg to vbs mgr")
-
+        
     def handle_timer(self):
         print "Handle timer! %d" %self.state
         self.handle_states()

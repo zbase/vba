@@ -20,8 +20,10 @@ if __name__ == '__main__':
     mb_mgr = mbManager.MembaseManager(vbsManager)
 
     #Set the managers in vbsManager for callbacks
-    vbsManager.setMigrationManager(migration_mgr)
-    vbsManager.setMembaseManager(mb_mgr)
+    vbsManager.set_migration_manager(migration_mgr)
+    vbsManager.set_membase_manager(mb_mgr)
+    diskMonitor = DiskMonitor(vbsManager, as_mgr)
+    kvstores = diskMonitor.get_kvstores()
 
     #Migration manager starts its own thread
     migration_mgr.run()
