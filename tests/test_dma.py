@@ -11,6 +11,12 @@ class TVBM:
     def send_error(self, msg):
         print "Error message to VBS: %s" %msg
 
+    def get_kv_stats(self, host):
+        return None
+
+    def get_vb_stats(self, host):
+        return None
+
 as_mgr = AsynCon()
 vbs_mgr = TVBM()
 

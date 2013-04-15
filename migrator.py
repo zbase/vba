@@ -25,7 +25,7 @@ class Migrator(asyncon.AsynConDispatcher):
     KVSTORE_STATS_STR = "kvstore"
     #VBUCKET_MIGRATOR_PATH = "/opt/membase/bin/vbucketmigrator"
     VBUCKET_MIGRATOR_PATH = "/home/vdhussa/temp/vbucketmigrator/vbucketmigrator"
-    INIT, START, CHECK_TAP, TAP_REGISTER, RUN, MONITOR, ERROR, RESTART, FAIL, CHECK_TRANSFER_COMPLETE, TRANSFER_COMPLETE, STOP = range(10)
+    INIT, START, CHECK_TAP, TAP_REGISTER, RUN, MONITOR, ERROR, RESTART, FAIL, CHECK_TRANSFER_COMPLETE, TRANSFER_COMPLETE, STOP = range(12)
     RETRY_COUNT = 3
     INIT_TIMER = 2
     MONITOR_TIMER = 10
@@ -226,32 +226,6 @@ class Migrator(asyncon.AsynConDispatcher):
                 dmc.close()
         return 0
 
-    #def fetch_vb_items(self):
-    #    source = self.config.get('source')
-    #    dest = self.config.get('destination')
-    #    t = threading.Thread(target=self.get_vb_items, args=(source,True))
-    #    t.daemon = True
-    #    t.start()
-    #    if dest != '':
-    #        td = threading.Thread(target=self.get_vb_items, args=(dest,False))
-    #        td.daemon = True
-    #        td.start()
-        
-
-    #def get_vb_items(self, addr, source = True):
-    #    dhost, dport = addr.split(":")
-    #    mc = mc_bin_client.MemcachedClient(dhost, int(dport))
-    #    try:
-    #        stats = mc.stats(Migrator.VBUCKET_STATS_STR)
-    #        if source:
-    #            self.vb_stats = stats
-    #        else:
-    #            self.vb_dest_stats = stats
-    #    except Exception, e:
-    #        Log.error("Unable to get vbucket stats for %s" %addr)
-    #    finally:
-    #        mc.close()
-
     def handle_fail(self):
         Log.debug("Handle migrator fail")
 
@@ -349,6 +323,10 @@ class Migrator(asyncon.AsynConDispatcher):
                 self.handle_transfer_fail(ret)
 
     def is_transfer_complete(self):
+        dest = self.config.get('destination')
+        self.local_item_counts = self.get_items("127.0.0.1:11211")
+        self.remote_item_count = self.get_items(dest)
+
         if self.local_item_counts is None:
             t = threading.Thread(target=self.get_vb_items)
             t.daemon = True
@@ -398,6 +376,14 @@ class Migrator(asyncon.AsynConDispatcher):
         finally:
             mc.close()
 
+    def get_items(self, host):
+        vblist = self.config.get('vblist')
+        vb_stats = self.migration_manager.vbs_manager.get_vb_stats(host)
+        stats_map = {}
+        for vb in vblist:
+            stats_map[vb] = vb_stats[vb]['curr_items']
+        return stats_map
+
     def handle_transfer_complete(self):
         self.retry_count = Migrator.RETRY_COUNT
         dest = self.config.get('destination')
@@ -444,7 +430,7 @@ class Migrator(asyncon.AsynConDispatcher):
             self.change_config()
         elif self.state == Migrator.CHECK_TRANSFER_COMPLETE:
             self.check_transfer_complete()
-        elif self.state == Migrator.TRANSFER_COMPLETE
+        elif self.state == Migrator.TRANSFER_COMPLETE:
             self.handle_transfer_complete()
 
     def handle_timer(self):

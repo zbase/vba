@@ -11,19 +11,14 @@ from asyncon import *
 Log = getLogger()
 
 class MembaseHandler(AsynConDispatcher):
-    VERSION_MONITORING = 1
-    STATS_MONITORING = 2
-    STATS_COMMAND = "START_STATS"
-    START_COMMAND = "START"
     MEMBASE_PORT = 11211
     ERROR_THRESHOLD = 5
-    HEALTHY = 1
-    FAIL = 2
-    RECONNECT = 3
+    VERSION_MONITORING, VB_STATS_MONITORING, KV_STATS_MONITORING, HEALTHY, FAIL, RECONNECT = range(6)
     STATS_TERM = "END"
     ITEM_COUNT_KEY = "curr_items"
     MEMBASE_VERSION_CMD = "version\r\n"
-    MEMBASE_STATS_CMD = "stats\r\n"
+    MEMBASE_VB_STATS_CMD = "stats vbucket\r\n"
+    MEMBASE_KV_STATS_CMD = "stats kvstore\r\n"
     TOT_RETRY_COUNT = 3
     CUR_ITEMS_DELTA = 500
 
@@ -39,7 +34,6 @@ class MembaseHandler(AsynConDispatcher):
         self.local_item_count = -1
         self.remote_item_count = -1
         self.cmd_type = None
-        self.half_baked = True
         self.send_count = 0
         self.recv_count = 0
         self.timeout = 10
@@ -49,6 +43,8 @@ class MembaseHandler(AsynConDispatcher):
         self.aok_ts = time.time()
         self.read_callback = None
         self.monit_ip = None
+        self.vb_stats = None
+        self.kv_stats = None
         self.host = None
 
         if(params.has_key('ip')):
@@ -82,11 +78,9 @@ class MembaseHandler(AsynConDispatcher):
         if(params.has_key('mgr')):
             self.mgr = params['mgr']
         if(params.has_key('type')):
-            if params['type'] == MembaseHandler.STATS_COMMAND :
-                self.command_type = MembaseHandler.STATS_MONITORING
-            else:
-                self.command_type = MembaseHandler.VERSION_MONITORING
-                self.half_baked = False
+            self.command_type = params['type']
+        else:
+            self.command_type = MembaseHandler.VERSION_MONITORING
 
         AsynConDispatcher.__init__(self, None, self.timeout, self.mgr)
         #Creates non blocking socket
@@ -128,7 +122,6 @@ class MembaseHandler(AsynConDispatcher):
         while True:
             try:
                 self.rbuf += self.recv(self.buffer_size)
-                Log.debug(self.rbuf)
             except socket.error, why:
                 if why[0] == errno.EAGAIN:
                     break
@@ -139,26 +132,43 @@ class MembaseHandler(AsynConDispatcher):
                     return
         if self.command_type == MembaseHandler.VERSION_MONITORING:   
             response = self.handle_version_read()
-        else:
-            response = self.handle_stats_read()
+        elif self.command_type == MembaseHandler.VB_STATS_MONITORING:
+            response = self.handle_vb_stats_read()
+        elif self.command_type == MembaseHandler.KV_STATS_MONITORING:
+            response = self.handle_kv_stats_read()
         if ((not response is None) and (not self.read_callback is None)):
             self.read_callback(self, response)
 
-    def handle_stats_read(self):
+    def handle_vb_stats_read(self):
         if self.rbuf.find(MembaseHandler.STATS_TERM) > 0:
+            self.recv_count += 1
             stats_map = {}
             msg = self.rbuf[:len(self.rbuf)]
             self.rbuf = ""
-            data_arr = msg.split("\r\n")
-            for row in data_arr:
+            for row in msg.splitlines():
                 data = row.split(' ')
-                if len(data) > 2:
+                if len(data) == 7:
+                    stat_map = {}
+                    vb = int((data[1].split('_'))[1])
+                    stat_map['state'] = data[2]
+                    stat_map[data[3]] = data[4]
+                    stat_map[data[5]] = data[6]
+                    stats_map[vb] = stat_map
+            self.vb_stats = stats_map
+            return stats_map
+        return None
+
+    def handle_kv_stats_read(self):
+        if self.rbuf.find(MembaseHandler.STATS_TERM) > 0:
+            self.recv_count += 1
+            stats_map = {}
+            msg = self.rbuf[:len(self.rbuf)]
+            self.rbuf = ""
+            for row in msg.splitlines():
+                data = row.split(' ')
+                if len(data) == 3:
                     stats_map[data[1]] = data[2]
-            if stats_map.has_key(MembaseHandler.ITEM_COUNT_KEY):
-                self.remote_item_count = int(stats_map[MembaseHandler.ITEM_COUNT_KEY])
-                self.recv_count += 1
-                if self.local_item_count != -1 and (self.remote_item_count - self.local_item_count) < MembaseHandler.CUR_ITEMS_DELTA:
-                    self.half_baked = False
+            self.kv_stats = stats_map
             return stats_map
         return None
 
@@ -175,7 +185,10 @@ class MembaseHandler(AsynConDispatcher):
         self.write_data(MembaseHandler.MEMBASE_VERSION_CMD)
 
     def send_stats(self):
-        self.write_data(MembaseHandler.MEMBASE_STATS_CMD)
+        if self.command_type == MembaseHandler.VB_STATS_MONITORING:
+            self.write_data(MembaseHandler.MEMBASE_VB_STATS_CMD)
+        else:
+            self.write_data(MembaseHandler.MEMBASE_KV_STATS_CMD)
 
     def set_read(self):
         status = True
@@ -228,18 +241,14 @@ class MembaseHandler(AsynConDispatcher):
         if con_health == MembaseHandler.HEALTHY:
             # Check of connection is healthy
             # Check sent and received count
-            if self.command_type == MembaseHandler.STATS_MONITORING:
-                Log.debug("Item counts: Local: %d Remote %d" %(self.local_item_count, self.remote_item_count))
-                if (self.remote_item_count >= 0) and (self.local_item_count > 0)  and ((self.remote_item_count - self.local_item_count) < MembaseHandler.CUR_ITEMS_DELTA):
-                    self.half_baked = False
-                    Log.info("Slave is fully functional")
-                if not self.half_baked:
-                    #Switch to command type VERSION
-                    Log.info("Switching to command type VERSION")
-                    self.command_type = MembaseHandler.VERSION_MONITORING
-                    self.send_version()
-                else:
-                    self.send_stats()
+            if self.command_type == MembaseHandler.VB_STATS_MONITORING:
+                Log.debug(self.vb_stats)
+                self.command_type = MembaseHandler.KV_STATS_MONITORING
+                self.send_stats()
+            elif self.command_type == MembaseHandler.KV_STATS_MONITORING:
+                Log.debug(self.kv_stats)
+                self.command_type = MembaseHandler.VB_STATS_MONITORING
+                self.send_stats()
             else:
                 self.send_version()
             self.enable_timeout()

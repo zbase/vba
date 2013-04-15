@@ -9,6 +9,7 @@ import utils
 #Each monitoring agent is an instance of MembaseHandler
 class MembaseManager(AsynConDispatcher):
     INIT, CONFIG, MONITOR, STOP = range(4)
+    LOCAL = "127.0.0.1:11211"
 
     def __init__(self):
         self.as_mgr = as_mgr
@@ -83,6 +84,12 @@ class MembaseManager(AsynConDispatcher):
     def mb_stats_callback(self, obj, response):
         self.monitoring_agents[obj.host]["stats"] = response
 
+    def get_vb_stats(self, host):
+        return self.monitoring_agents[host]["agent"].vb_stats
+    
+    def get_kv_stats(self, host):
+        return self.monitoring_agents[host]["agent"].kv_stats
+
     # When a membase node is down
     # Keep the host in a down list
     # Stop monitoring and report to vbs
@@ -109,11 +116,14 @@ class MembaseManager(AsynConDispatcher):
             Log.info("Stopping monitoring %s" %k)
         self.monitoring_agents = {}
 
+    def handle_init(self):
+        self.start_monitoring(MembaseManager.LOCAL)
+
     def handle_states(self):
         if self.state == MigrationManager.INIT:
-            Log.debug("Init state... waiting")
+            self.handle_init()
         elif self.state == MigrationManager.CONFIG:
-            print "Handle config"
+            Log.debug("Handle config")
             self.handle_new_config()
         elif self.state == MigrationManager.MONITOR:
             self.monitor()

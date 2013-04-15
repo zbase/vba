@@ -19,7 +19,7 @@ def handle_hbm_response(con, obj):
     Log.debug("Got response from vbs: %s" %obj)
 
 if __name__ == '__main__':
-    params = {"ip":mb_ip, "port":mb_port, "failCallback":hbmFailCallback, 'mgr':as_mgr, "bindIp":bind_ip, "timeout":10, "type":MembaseHandler.STATS_COMMAND}
+    params = {"ip":mb_ip, "port":mb_port, "failCallback":hbmFailCallback, 'mgr':as_mgr, "bindIp":bind_ip, "timeout":10, "type":MembaseHandler.VB_STATS_MONITORING}
     hbmCon = MembaseHandler(params)
     try:
         print("Starting VBA")

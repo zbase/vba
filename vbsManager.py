@@ -35,6 +35,12 @@ class VBSManager:
     def set_membase_manager(self, mb_mgr):
         self.membase_manager = mb_mgr
 
+    def get_vb_stats(self, host):
+        return self.membase_manager.get_vb_stats()
+
+    def get_kv_stats(self, host):
+        return self.membase_manager.get_kv_stats()
+
     def set_kvstores(self, kvstores):
         if self.kvstores != kvstores and self.init_done:
             message = {"Cmd":"CapacityUpdate ", "DiskAlive":len(kvstores)}
