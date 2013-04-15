@@ -17,10 +17,12 @@ class MigrationManager(asyncon.AsynConDispatcher):
     def __init__(self, vbs_manager):
         self.rowid = 0
         self.vbtable = {}
+        self.transfer_vbtable = {}
         self.vbs_manager = vbs_manager
         self.state = MigrationManager.INIT
         self.as_mgr = asyncon.AsynCon()
         self.timer = 5
+        self.send_config_response = False
         self.ifaces = utils.get_all_interfaces()
         self.err_queue = []
         asyncon.AsynConDispatcher.__init__(self, None, self.timer, self.as_mgr)
@@ -60,6 +62,9 @@ class MigrationManager(asyncon.AsynConDispatcher):
         value['source'] = source
         value['destination'] = dest
         value['vblist'] = vblist
+        value['CheckPoints'] = row.get("CheckPoints")
+        value['Transfer_VbId'] = row.get("Transfer_VbId")
+        value['RestoreCheckPoints'] = row.get('RestoreCheckPoints')
         return key, value
 
     def get_iface_for_ip(self, src_ip):
@@ -71,7 +76,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
 
     def handle_new_config(self):
         new_vb_table = {}
-        global heartbeat_interval
+        heartbeat_interval = 10
         if ('HeartBeatTime' in self.config):
             heartbeat_interval = self.config['HeartBeatTime']
             self.timer = heartbeat_interval
@@ -108,6 +113,12 @@ class MigrationManager(asyncon.AsynConDispatcher):
                 (ip,port) = value['source'].split(':')
                 value['interface'] = self.get_iface_for_ip(ip)
                 new_vb_table[key] = value
+                #Check for transfer and create a new row if needed
+                if value.has_key('Transfer_VbId') and (value['Transfer_VbId'] is not None) and len(value['Transfer_VbId']) > 0:
+                    key_transfer = key+"_transfer"
+                    value['transfer'] = True
+                    value['vblist'] = value['Transfer_VbId']
+                    new_vb_table[key_transfer] = value
             except RuntimeError, (message):
                 err_details.append(message)
 
@@ -148,11 +159,11 @@ class MigrationManager(asyncon.AsynConDispatcher):
 
         self.state = MigrationManager.MONITOR
 
-        if (len(err_details)):
+        if (len(err_details) > 0):
             self.vbs_manager.send_error(json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":err_details}))
             return False
         else:
-            self.vbs_manager.send_message(json.dumps({"Cmd":"Config", "Status":"OK"}))
+            self.send_config_response = True
             return True
 
     def get(self, key):
@@ -180,7 +191,24 @@ class MigrationManager(asyncon.AsynConDispatcher):
         self.timer_event.add(self.timer)
 
     def monitor(self):
-        Log.debug("Monitor err queues and send msg to vbs mgr")
+        Log.debug("If send_config_response is set, get checkpoints from backup daemon")
+        if self.send_config_response:
+            if self.config_response is not None:
+                self.vbs_manager.send_message(self.config_response)
+                self.send_config_response = False
+            else:
+                t = threading.Thread(target=self.get_checkpoints)
+                t.daemon = True
+                t.start
+
+    def get_checkpoints(self):
+        cp_vb_ids = self.config.get("RestoreCheckPoints")
+        #TODO: Get the restore checkpoints from backup daemon
+        cp_arr = []
+        for i in range(len(cp_vb_ids)):
+            cp_arr.append(0)
+
+        self.config_response = {"Cmd":"Config", "Status":"OK", "Vbuckets":{"Replica":cp_vb_ids}, "CheckPoints":{"Replica":cp_arr}}
         
     def handle_timer(self):
         print "Handle timer! %d" %self.state

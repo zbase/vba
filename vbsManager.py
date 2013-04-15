@@ -28,6 +28,7 @@ class VBSManager:
         self.membase_manager = mb_mgr
         self.errqueue = errqueue
         self.kvstores = None
+        self.init_done = False
         Log.info("Server name: %s : %d" %(self.VBS_SERVER_NAME, self.VBS_SERVER_PORT))
         self.connect()
 
@@ -35,6 +36,9 @@ class VBSManager:
         self.membase_manager = mb_mgr
 
     def set_kvstores(self, kvstores):
+        if self.kvstores != kvstores and self.init_done:
+            message = {"Cmd":"CapacityUpdate ", "DiskAlive":len(kvstores)}
+            self.send_message(json.dumps(message))
         self.kvstores = kvstores
 
     def set_migration_manager(self, mg_mgr):
@@ -86,13 +90,14 @@ class VBSManager:
             disk_count = len(self.kvstores)
         resp_str = json.dumps({"Agent":"VBA", "Capacity":disk_count})
         self.send_message(resp_str)
+        self.init_done = True
 
     def send_error(self, error):
         #resp_str = json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":err_details})
         self.send_message(error)
 
     def report_down_node(self, ip):
-        self.send_message(json.dumps({"Cmd":"FAIL", "Server":ip}))
+        self.send_message(json.dumps({"Cmd":"FAIL", "Desptination":ip}))
 
     def send_message(self, msg):
         self.vbs_con.writeData(VBSMessage.getMsg(msg))

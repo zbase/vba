@@ -5,6 +5,7 @@ import os
 import signal
 import zlib
 import time
+import json
 
 MEMBASE_LIB_DIR="/opt/membase/lib/python"
 sys.path.append(MEMBASE_LIB_DIR)
@@ -24,13 +25,14 @@ class Migrator(asyncon.AsynConDispatcher):
     KVSTORE_STATS_STR = "kvstore"
     #VBUCKET_MIGRATOR_PATH = "/opt/membase/bin/vbucketmigrator"
     VBUCKET_MIGRATOR_PATH = "/home/vdhussa/temp/vbucketmigrator/vbucketmigrator"
-    INIT, START, CHECK_TAP, TAP_REGISTER, RUN, MONITOR, ERROR, RESTART, FAIL, STOP = range(10)
+    INIT, START, CHECK_TAP, TAP_REGISTER, RUN, MONITOR, ERROR, RESTART, FAIL, CHECK_TRANSFER_COMPLETE, TRANSFER_COMPLETE, STOP = range(10)
     RETRY_COUNT = 3
     INIT_TIMER = 2
     MONITOR_TIMER = 10
     VBM_TIMER = 5 
     VBM_STATS_SOCK = "/var/tmp/vbs/vbm.sock"
     MAX_MONITOR_INTERVAL = 30
+    MAX_ITEM_THRESHOLD = 500
 
     def __init__(self, key, migration_mgr, mb_mgr, as_mgr):
         self.migration_mgr = migration_mgr
@@ -49,6 +51,7 @@ class Migrator(asyncon.AsynConDispatcher):
         self.config = None
         self.vb_stats = None
         self.vb_dest_stats = None
+        self.transfer = False
         self.monitor_ts = time.time()
         asyncon.AsynConDispatcher.__init__(self, None, self.timer, self.as_mgr)
         self.create_timer()
@@ -62,6 +65,9 @@ class Migrator(asyncon.AsynConDispatcher):
         source = self.config.get('source')
         dest = self.config.get('destination')
         vblist = self.config.get('vblist')
+        self.transfer = self.config.get('transfer')
+        if  self.transfer is None:
+            self.transfer = False
 
         if self.source_vb_set and self.dest_vb_set:
             self.state = Migrator.CHECK_TAP
@@ -70,7 +76,7 @@ class Migrator(asyncon.AsynConDispatcher):
             t = threading.Thread(target=self.init_vbucket, args=(source, vblist, "active"))
             t.daemon = True
             t.start()
-        elif not self.dest_vb_set:
+        elif not self.dest_vb_set and not self.transfer:
             t = threading.Thread(target=self.init_vbucket, args=(dest, vblist, "replica"))
             t.daemon = True
             t.start()
@@ -90,7 +96,7 @@ class Migrator(asyncon.AsynConDispatcher):
     def set_vbucket_state(self, hostport, vblist, state):
         host,port = hostport.split(":")
         mc = mc_bin_client.MemcachedClient(host, int(port))
-        print "setting %s for %s" %(hostport, state)
+        Log.debug("setting %s for %s" %(hostport, state))
         try:
             for vb in vblist:
                 op, cas, data = self.setvb(mc, str(vb), state)
@@ -152,6 +158,9 @@ class Migrator(asyncon.AsynConDispatcher):
     def call_tap_register(self): 
         source = self.config.get('source')
         tapname = "repli-" + ("%X" % zlib.crc32(self.key))
+        checkpoints = self.config.get('CheckPoints')
+        #TODO: Register checkpoints per vbucket
+        Log.debug("TODO: Register checkpoints per tap. Defaulting to -1 for all")
         if utils.register_tap_name(source.split(":"), tapname) == 0:
             self.state = Migrator.RUN
             self.retry_count = Migrator.RETRY_COUNT
@@ -168,14 +177,19 @@ class Migrator(asyncon.AsynConDispatcher):
         tapname = "repli-" + ("%X" % zlib.crc32(self.key))
 
         vblist_str = ",".join(str(vb) for vb in vblist)
+        vbmp_arr = ["sudo", Migrator.VBUCKET_MIGRATOR_PATH, "-h", source, "-b", vblist_str, "-d", dest, "-N", tapname, "-A", ]
+        if interface != '':
+            vbmp_arr.append("-i")
+            vbmp_arr.append(interface)
+
+        if self.transfer:
+            #-t for transfer vbuckets
+            vbmp_arr.append("-t")
+
         # Starting vBucketMigrator
-        if (interface == ''):
-            print "Starting without interface"
-            self.vbmp = subprocess.Popen(["sudo", Migrator.VBUCKET_MIGRATOR_PATH, "-h", source, "-b", vblist_str, "-d", dest, "-N", tapname, "-A", "-v", "-r"], stdout=subprocess.PIPE, stderr=subprocess.PIPE) 
-        else:
-            self.vbmp = subprocess.Popen(["sudo", Migrator.VBUCKET_MIGRATOR_PATH, "-h", source, "-b", vblist_str, "-d", dest, "-N", tapname, "-A", "-i", interface, "-v", "-r"], stdout=subprocess.PIPE, stderr=subprocess.PIPE) 
+        #self.vbmp = subprocess.Popen(["sudo", Migrator.VBUCKET_MIGRATOR_PATH, "-h", source, "-b", vblist_str, "-d", dest, "-N", tapname, "-A", "-i", interface, "-v", "-r"], stdout=subprocess.PIPE, stderr=subprocess.PIPE) 
+        self.vbmp = subprocess.Popen(vbmp_arr, stdout=subprocess.PIPE, stderr=subprocess.PIPE) 
         Log.debug('Started VBM with pid %d interface %s', self.vbmp.pid, interface)
-        print('Started VBM with pid %d interface %s', self.vbmp.pid, interface)
         Log.info("Switching to monitor mode for %s" %self.key)
         self.state = Migrator.MONITOR
 
@@ -256,7 +270,7 @@ class Migrator(asyncon.AsynConDispatcher):
         if self.vbm_monitor is None:
             (host, port) = dest.split(':')
             vbm_stats_sock = Migrator.VBM_STATS_SOCK + "." + host
-            print "Sock: %s" %vbm_stats_sock
+            Log.debug("Sock: %s" %vbm_stats_sock)
             params={"addr":vbm_stats_sock, "name":dest, "timeout":Migrator.VBM_TIMER, "mgr":self.as_mgr}
             self.vbm_monitor = mbMigratorHandler. MBMigratorHandler(params)
         else:
@@ -265,7 +279,10 @@ class Migrator(asyncon.AsynConDispatcher):
                 Log.debug("VBM progress is fine")
             elif not stats:
                 Log.error("VBM %s is not running. Will try restarting" %dest)
-                self.state = Migrator.RESTART
+                if not self.transfer:
+                    self.state = Migrator.RESTART
+                else:
+                    self.state = Migrator.CHECK_TRANSFER_COMPLETE
             else:
                 Log.info("VBM %s is not progressing" %dest)
         self.timer = Migrator.MONITOR_TIMER
@@ -315,6 +332,88 @@ class Migrator(asyncon.AsynConDispatcher):
     def stop_migrator(self):
         self.state = Migrator.STOP
 
+    def check_transfer_complete(self):
+        #Check the vb item counts!
+        ret = self.is_transfer_complete()
+        if ret is not None and len(ret) == 0:
+            self.state = Migrator.TRANSFER_COMPLETE
+        elif ret is not None:
+            #Err vbs available
+            dest = self.config.get('destination')
+            if self.retry_count > 0:
+                Log.info("Unable to complete the transfer. Restarting vBucketMigrator for %s" %dest)
+                self.retry_count -= 1
+                self.state = Migrator.RESTART
+            else:
+                Log.error("Failed to transfer the vBuckets. Reporting to VBS")
+                self.handle_transfer_fail(ret)
+
+    def is_transfer_complete(self):
+        if self.local_item_counts is None:
+            t = threading.Thread(target=self.get_vb_items)
+            t.daemon = True
+            t.start()
+
+        if self.remote_item_count is None:
+            t = threading.Thread(target=self.get_vb_items, args=(False))
+            t.daemon = True
+            t.start()
+
+        if (self.local_item_count is not None) and (self.remote_item_count is not None):
+            err_vbs = []
+            for vb,val in self.local_item_count:
+                if (val - self.remote_item_count[vb]) > Migrator.MAX_ITEM_THRESHOLD:
+                    err_vbs.append(vb)
+            return err_vbs
+        return None
+
+    #Get item counts for the vBuckets from local and remote machines
+    def get_vb_items(self, local=True):
+        host = "127.0.0.1"
+        port = 11211
+        vblist = self.config.get('vblist')
+        if not local:
+            dest = self.config.get('destination')
+            host,port = dest.split(":")
+            port = int(port)
+         
+        mc = mc_bin_client.MemcachedClient(host, port)
+        Log.debug("setting %s for %s" %(hostport, state))
+        stats_map = {}
+        try:
+            stats = mc.stats(VBUCKET_STATS_STR)
+            for vb in vblist: 
+                k = "vb_%d" %vb
+                val = stats[k].split(" ")
+                count = int(val[3])
+                stats_map[vb] = count
+
+            if local:
+                self.local_item_count = stats_map
+            else:
+                self.remote_item_count = stats_map
+        except Exception, e:
+            Log.error("Could not get vbucket stats for %s. %s" %(host, e))
+            return 1
+        finally:
+            mc.close()
+
+    def handle_transfer_complete(self):
+        self.retry_count = Migrator.RETRY_COUNT
+        dest = self.config.get('destination')
+        vblist = self.config.get('vblist')
+        Log.info("Transfer is complete for vbuckets: %s" %vblist)
+        response = {"Cmd":"TRANSFER_DONE", "Status":"OK", "Destination": dest, Vbuckets:{"Active":vblist, "Replica":[]}}
+        self.migration_manager.vbs_manager.send_message(json.dumps(response))
+        self.stop_migrator()
+
+    def handle_transfer_fail(self, vblist):
+        dest = self.config.get('destination')
+        Log.info("Transfer is complete for vbuckets: %s" %vblist)
+        response = {"Cmd":"TRANSFER_DONE", "Status":"ERROR", "Destination": dest, Vbuckets:{"Active":vblist, "Replica":[]}}
+        self.migration_manager.vbs_manager.send_message(json.dumps(response))
+        self.stop_migrator()
+
     def handle_states(self):
         Log.info("Current state: %d" %self.state)
         if self.state == Migrator.INIT:
@@ -343,9 +442,13 @@ class Migrator(asyncon.AsynConDispatcher):
         elif self.state == Migrator.CHANGE_CONFIG:
             # Handle config change
             self.change_config()
+        elif self.state == Migrator.CHECK_TRANSFER_COMPLETE:
+            self.check_transfer_complete()
+        elif self.state == Migrator.TRANSFER_COMPLETE
+            self.handle_transfer_complete()
 
     def handle_timer(self):
-        print "Handle timer! %d" %self.state
+        Log.debug("Handle timer! %d" %self.state)
         self.handle_states()
         self.set_timer()
 

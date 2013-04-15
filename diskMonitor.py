@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 import sys
 import os
+import threading
+import json
+import asyncon
 
 MEMBASE_LIB_DIR="/opt/membase/lib/python"
 sys.path.append(MEMBASE_LIB_DIR)
@@ -11,7 +14,7 @@ from logger import *
 Log = getLogger()
 
 class DiskMonitor(asyncon.AsynConDispatcher):
-    TIMER = 60
+    TIMER = 5
     VBUCKET_STAT_STR = "vbucket"
     KVSTORE_STATS_STR = "kvstore"
     NUM_KVSTORE_KEY = "num_kvstores"
@@ -42,22 +45,24 @@ class DiskMonitor(asyncon.AsynConDispatcher):
         t.daemon = True
         t.start()
 
-    def get_kvstores(self):
-        mc = mc_bin_client.MemcachedClient(self.host, self.port)
+    def get_kvstores(self, mc = None):
+        if mc is None:
+            mc = mc_bin_client.MemcachedClient(self.host, self.port)
         kvstores = []
         try:
             kvstats = mc.stats(DiskMonitor.KVSTORE_STATS_STR)
             num_kvstores = int(kvstats[DiskMonitor.NUM_KVSTORE_KEY])
             num_kvstores += 1
-            for i in range(1,num):
+            for i in range(1,num_kvstores):
                 key = "kvstore%d:status" %i
                 if kvstats[key] == DiskMonitor.ONLINE:
                     kvstores.append(i)
         except Exception, e:
             Log.error("Unable to get kvstats %s" %e)
+            return
         finally:
             mc.close()
-        self.kv_stores = kbstores
+        self.kv_stores = kvstores
         self.state = DiskMonitor.MONITOR
         self.vbs_mgr.set_kvstores(self.kv_stores)
         return kvstores
@@ -68,14 +73,15 @@ class DiskMonitor(asyncon.AsynConDispatcher):
         try:
             stats = mc.stats()
             commit_fails = {}
-            for kv in self.kv_stores.iteritems():
-                kv_key = commit_fail_key_prefix+str(kv)
-                commit_fails[kv] = stats[kv_key]
+            for kv in self.kv_stores:
+                kv_key = commit_fail_key_prefix+str(kv-1)
+                commit_fails[kv] = int(stats[kv_key])
             if self.commit_fails_cur is not None and (self.commit_fails is None):
                 self.commit_fails = self.commit_fails_cur
+            Log.debug("Setting commit fails cur to %s" %commit_fails)
             self.commit_fails_cur = commit_fails
-        except:
-            Log.critical("Unable to get local stats")
+        except Exception, e:
+            Log.critical("Unable to get local stats %s" %e)
         finally:
             mc.close()
 
@@ -83,9 +89,9 @@ class DiskMonitor(asyncon.AsynConDispatcher):
         err_kv = []
         if self.commit_fails is not None and len(self.commit_fails) > 0:
             #Check if the fails diff is within the threshold
-            for k,count in self.commit_fails_cur:
+            for k,count in self.commit_fails_cur.items():
                 count_old = self.commit_fails[k]
-                if (count - count_old) >  DiskManager.COMMIT_FAILED_THRESHOLD:
+                if (count - count_old) >  DiskMonitor.COMMIT_FAILED_THRESHOLD:
                     err_kv.append(k)
 
         if len(err_kv) > 0:
@@ -94,51 +100,57 @@ class DiskMonitor(asyncon.AsynConDispatcher):
             trep = threading.Thread(target=self.report_kvstores, args=(err_kv))
             trep.daemon = True
             trep.start()
+        else:
+            Log.debug("Disk is fine!")
 
-        t = threading.Thread(target=self.get_local_commit_fails)
+        t = threading.Thread(target=self.get_commit_fails)
         t.daemon = True
         t.start()
-        Log.debug("Monitor err queues and send msg to vbs mgr")
 
-    def report_kvstores(err_kv):
+    def report_kvstores(self, err_kv):
         #send error to vbs
         #mark vbuckets dead
         mc = mc_bin_client.MemcachedClient(self.host, self.port)
         try:
             vbuckets_failed = self.get_failed_vbuckets(mc, err_kv)
-            self.vbs_manager.send_error(json.dumps({"Cmd":"DisksFailed", "Status":"ERROR", "Active":vbuckets_failed["active"], "Replica":vbuckets_failed["replica"]}))
+            self.vbs_mgr.send_error(json.dumps({"Cmd":"DEAD_VBUCKETS", "Status":"ERROR", "Vbuckets":{"Active":vbuckets_failed["active"], "Replica":vbuckets_failed["replica"]}, "DiskFailed":len(err_kv)}))
             Log.info("Marking kvstore(s) offline %s" %err_kv)
             for kv in err_kv:
                 mc.set_flush_param("kvstore_offline", str(kv))
+            self.get_kvstores(mc)
         except Exception, e:
-            Log.critical("Unable to send fail message to vbs for kvstores %s" %err_kv)
+            Log.critical("Problem handling kvstores %s. %s" %(err_kv, e))
         finally:
             mc.close()
 
-    def get_failed_vbuckets(self, err_kv, mc):
-        response = mc.stats(DiskMonitor.VBUCKET_STAT_STR)
-        active_list = []
-        replica_list = []
-        vmap = {}
-        for k,v in response.items():
-            vb = int(k.split("_")[1])
-            v = "status "+v
-            vals =v.split(" ")
-            m={}
-            for x in range(0,len(vals),2):
-                m[vals[x]] = vals[x+1]
-            vmap[vb] = m
+    def get_failed_vbuckets(self, mc, err_kv):
+        try:
+            response = mc.stats(DiskMonitor.VBUCKET_STAT_STR)
+            active_list = []
+            replica_list = []
+            vmap = {}
+            for k,v in response.items():
+                vb = int(k.split("_")[1])
+                v = "status "+v
+                vals =v.split(" ")
+                m={}
+                for x in range(0,len(vals),2):
+                    m[vals[x]] = vals[x+1]
+                vmap[vb] = m
 
-        for vb,map in vmap.items():
-            if int(map["kvstore"]) in err_kv:
-                if map["status"] == "active":
-                    active_list.append(vb)
-                else:
-                    replica_list.append(vb)
-        ret_map = {}
-        ret_map["active"] = active_list
-        ret_map["replica"] = replica_list
-        return ret_map
+            for vb,map in vmap.items():
+                if int(map["kvstore"]) in err_kv:
+                    if map["status"] == "active":
+                        active_list.append(vb)
+                    else:
+                        replica_list.append(vb)
+            ret_map = {}
+            ret_map["active"] = active_list
+            ret_map["replica"] = replica_list
+            return ret_map
+        except Exception, e:
+            Log.error("Error finding down vBuckets %s" %e)
+            raise e
 
     def set_state(self, state):
         self.state = state
@@ -147,11 +159,11 @@ class DiskMonitor(asyncon.AsynConDispatcher):
         #INIT, START, MONITOR, STOP
         if self.state == DiskMonitor.INIT:
             Log.debug("Initialize state")
-        elif self.state = DiskMapper.START:
+        elif self.state == DiskMonitor.START:
             self.start()
-        elif self.state == DiskMapper.MONITOR:
+        elif self.state == DiskMonitor.MONITOR:
             self.monitor()
-        elif self.state == DiskMapper.STOP:
+        elif self.state == DiskMonitor.STOP:
             Log.info("Set state to stop")
             self.destroy()
             return
