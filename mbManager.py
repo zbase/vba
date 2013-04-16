@@ -1,5 +1,6 @@
 from logger import *
-from asyncon import *
+import asyncon
+import threading
 from message import *
 from vbsManager import *
 
@@ -11,13 +12,14 @@ class MembaseManager(AsynConDispatcher):
     INIT, CONFIG, MONITOR, STOP = range(4)
     LOCAL = "127.0.0.1:11211"
 
-    def __init__(self):
-        self.as_mgr = as_mgr
+    def __init__(self, vbs_mgr):
+        self.as_mgr = None
         self.monitoring_host_list = []
         self.monitoring_agents = {}
         self.hb_interval = 30
         self.down_list = []
         self.state = MembaseManager.INIT
+        self.vbs_mgr = vbs_mgr
         self.as_mgr = asyncon.AsynCon()
         self.timer = 5
         self.config = None
@@ -66,7 +68,7 @@ class MembaseManager(AsynConDispatcher):
         #create a new MembaseHandler instance
         ip,port = host.split(":",1)
         #Fail command handler and stats read handler set here
-        params = {"ip":ip, "port":port, "failCallback":self.mb_fail_callback, 'mgr':self.as_mgr, "timeout":self.hb_interval, "type":MembaseHandler.STATS_COMMAND, "callback":self.mb_stats_callback}
+        params = {"ip":ip, "port":port, "failCallback":self.mb_fail_callback, 'mgr':self.as_mgr, "timeout":self.hb_interval, "type":MembaseHandler.KV_STATS_COMMAND, "callback":self.mb_stats_callback, "mb_mgr":self}
         mb = MembaseHandler(params)
         self.monitoring_host_list.append(host)
         self.monitoring_agents[host] = {"agent":mb}
@@ -85,10 +87,14 @@ class MembaseManager(AsynConDispatcher):
         self.monitoring_agents[obj.host]["stats"] = response
 
     def get_vb_stats(self, host):
-        return self.monitoring_agents[host]["agent"].vb_stats
+        if self.monitoring_agents.has_key(host):
+            return self.monitoring_agents[host]["agent"].vb_stats
+        return None
     
     def get_kv_stats(self, host):
-        return self.monitoring_agents[host]["agent"].kv_stats
+        if self.monitoring_agents.has_key(host):
+            return self.monitoring_agents[host]["agent"].kv_stats
+        return None
 
     # When a membase node is down
     # Keep the host in a down list
@@ -96,6 +102,10 @@ class MembaseManager(AsynConDispatcher):
     def mb_fail_callback(self, obj):
         self.down_list.append(obj.host)
         self.stop_monitoring(host)
+        self.vbs_mgr.report_down_node(obj.host)
+
+    def report_stats(self, stats_str):
+        self.vbs_mgr.send_message(stats_str)
     
     def get_down_list(self):
         return self.down_list
@@ -120,16 +130,16 @@ class MembaseManager(AsynConDispatcher):
         self.start_monitoring(MembaseManager.LOCAL)
 
     def handle_states(self):
-        if self.state == MigrationManager.INIT:
+        if self.state == MembaseManager.INIT:
             self.handle_init()
-        elif self.state == MigrationManager.CONFIG:
+        elif self.state == MembaseManager.CONFIG:
             Log.debug("Handle config")
             self.handle_new_config()
-        elif self.state == MigrationManager.MONITOR:
+        elif self.state == MembaseManager.MONITOR:
             self.monitor()
-        elif self.state == MigrationManager.STOP:
+        elif self.state == MembaseManager.STOP:
             self.stop_monitoring()
-        elif self.state == MigrationManager.END:
+        elif self.state == MembaseManager.END:
             Log.debug("Nothing to do!")
 
     def handle_timer(self):

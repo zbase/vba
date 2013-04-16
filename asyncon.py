@@ -41,6 +41,7 @@ class AsynConDispatcher(object):
         self.read_event = None
         self.write_event = None
         self.timeout_event = None
+        self.timer_event = None
         self.addr = addr = None
         self.connected = False
         self._mgr = mgr
@@ -221,7 +222,6 @@ class AsynConDispatcher(object):
     def handle_timer_event(self, _, evt):
         self.handle_timer()
 
-
     def handle_timeout_event(self, evt, fd, what, obj):
         if not self.connected:
             self.log_info('connection not established','warning')
@@ -266,9 +266,6 @@ class AsynConDispatcher(object):
         self.write_event = libevent.Event(self._base, self._fileno, AsynCon.EV_WRITE, self.handle_write_event, self)
         self.read_event = libevent.Event(self._base, self._fileno, AsynCon.EV_READ, self.handle_read_event, self)
         self.timeout_event = libevent.Event(self._base, self._fileno, AsynCon.EV_TIMEOUT, self.handle_timeout_event, self)
-        #self.read_event.add()
-        #self.timeout_event.add(self.timeout)
-        #self.write_event.add()
 
     def set_event(self, what, freq=None):
         if what == AsynCon.EV_READ:

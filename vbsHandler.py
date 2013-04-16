@@ -4,6 +4,7 @@ import exceptions
 import struct
 import errno
 import time
+import Queue
 
 from vbaConstants import *
 from logger import *
@@ -28,6 +29,7 @@ class VBSHandler(AsynConDispatcher):
         port = None
         self._map = None
         mgr = None
+        self.msg_queue = Queue.Queue()
         self.timeout_msg = ""
 
         if(params.has_key('ip')):
@@ -80,8 +82,11 @@ class VBSHandler(AsynConDispatcher):
         else:
             Log.info("No ip or port specified")
             return
-        self.enable_timeout()
-        self.set_read()
+        try:
+            self.enable_timeout()
+            self.set_read()
+        except Exception, e:
+            Log.debug("Err: %s" %e)
 
     def set_timeout(self, timeout):
         self.timeout = timeout
@@ -100,7 +105,7 @@ class VBSHandler(AsynConDispatcher):
     def destroy(self):
         if(self.connected == True):
             self.connected = False
-            self.close()
+        self.close()
 
     def set_read(self):
         status = True
@@ -172,7 +177,7 @@ class VBSHandler(AsynConDispatcher):
             Log.info("data is null")
             return
         self.closeSock = close
-        self.wbuf += data
+        self.msg_queue.put(data)
         if callback:
             self.callback = callback
         try:
@@ -185,6 +190,21 @@ class VBSHandler(AsynConDispatcher):
         return len(self.wbuf) > 0
 
     def handle_write(self):
+        #Copy from queue to buffer
+        try:
+            while True:
+                msg = self.msg_queue.get_nowait()
+                if msg is not None:
+                    self.rbuf += msg 
+                else:
+                    break
+            if len(self.rbuf) < 1:
+                self.enable_write()
+                return
+        except Exception, e:
+            Log.error("Exception reading from queue into buffer %s" %e)
+
+        #Write buffer to socket
         try:
             if self.link:
                 Log.info("client sending %s" % self.wbuf)

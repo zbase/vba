@@ -4,6 +4,7 @@ import exceptions
 import struct
 import errno
 import time
+import re
 
 from logger import *
 from asyncon import *
@@ -13,12 +14,13 @@ Log = getLogger()
 class MembaseHandler(AsynConDispatcher):
     MEMBASE_PORT = 11211
     ERROR_THRESHOLD = 5
-    VERSION_MONITORING, VB_STATS_MONITORING, KV_STATS_MONITORING, HEALTHY, FAIL, RECONNECT = range(6)
+    VERSION_MONITORING, VB_STATS_MONITORING, KV_STATS_MONITORING, CP_STATS_MONITORING, HEALTHY, FAIL, RECONNECT = range(7)
     STATS_TERM = "END"
     ITEM_COUNT_KEY = "curr_items"
     MEMBASE_VERSION_CMD = "version\r\n"
     MEMBASE_VB_STATS_CMD = "stats vbucket\r\n"
     MEMBASE_KV_STATS_CMD = "stats kvstore\r\n"
+    MEMBASE_CP_STATS_CMD = "stats checkpoint\r\n"
     TOT_RETRY_COUNT = 3
     CUR_ITEMS_DELTA = 500
 
@@ -40,11 +42,13 @@ class MembaseHandler(AsynConDispatcher):
         port = None
         self.map = None
         self.mgr = None
+        self.mb_mgr = None
         self.aok_ts = time.time()
         self.read_callback = None
         self.monit_ip = None
         self.vb_stats = None
         self.kv_stats = None
+        self.cp_stats = None
         self.host = None
 
         if(params.has_key('ip')):
@@ -71,6 +75,8 @@ class MembaseHandler(AsynConDispatcher):
         else:
             port = MembaseHandler.MEMBASE_PORT
             self.port = str(MembaseHandler.MEMBASE_PORT)
+        if params.has_key('mb_mgr'):
+            self.mb_mgr = params['mb_mgr']
 
         self.host = self.ip+":"+self.port
         if(params.has_key('map')):
@@ -136,6 +142,8 @@ class MembaseHandler(AsynConDispatcher):
             response = self.handle_vb_stats_read()
         elif self.command_type == MembaseHandler.KV_STATS_MONITORING:
             response = self.handle_kv_stats_read()
+        elif self.command_type == MembaseHandler.CP_STATS_MONITORING:
+            response = self.handle_cp_stats_read()
         if ((not response is None) and (not self.read_callback is None)):
             self.read_callback(self, response)
 
@@ -172,6 +180,61 @@ class MembaseHandler(AsynConDispatcher):
             return stats_map
         return None
 
+    def handle_cp_stats_read(self):
+        if self.rbuf.find(MembaseHandler.STATS_TERM) > 0:
+            self.recv_count += 1
+            stats_map = {}
+            msg = self.rbuf[:len(self.rbuf)]
+            self.rbuf = ""
+            regex = re.compile('[: ]')
+            for row in msg.splitlines():
+                data = regex.split(row)
+                if len(data) == 4:
+                    vb = int(data[1].split('_')[1])
+                    v_map = {}
+                    if stats_map.has_key(vb):
+                        v_map = stats_map[vb]
+                    v_map[data[2]] = data[3]
+                    stats_map[vb] = v_map
+
+            #Compare with existing map and report to vbs if there is a difference
+            to_send = False
+            if self.cp_stats is None:
+                to_send = True
+            else:
+                for vb, cp_map in stats_map.items():
+                    if (cp_map['state'] == 'active' or cp_map['state'] == 'replica') and  self.cp_stats.has_key(vb):
+                        if cp_map['open_checkpoint_id'] != self.cp_stats[vb]['open_checkpoint_id']:
+                            to_send = True
+                            break
+                    else:
+                        to_send = True
+                        break
+
+            self.cp_stats = stats_map
+            if to_send:
+                self.send_checkpoints()
+
+            return stats_map
+        return None
+
+    def send_checkpoints(self):
+        active_vb = []
+        replica_vb = []
+        active_cp = []
+        replica_cp = []
+
+        for vb, cp_map in self.cp_stats.items():
+            if cp_map['state'] == 'active':
+                active_vb.append(vb)
+                active_cp.append(int(cp_map['open_checkpoint_id']))
+            else:
+                replica_vb.append(vb)
+                replica_cp.append(int(cp_map['open_checkpoint_id']))
+
+        msg = {'Cmd':'CKPOINT', 'Vbuckets':{'Active':active_vb, 'Replica':replica_vb}, 'CheckPoints':{'Active':active_cp, 'Replica':replica_cp}}
+        self.mb_mgr.report_stats(msg)
+
     def handle_version_read(self):
         if self.rbuf.find("VERSION") >= 0:
             self.recv_count += 1
@@ -187,6 +250,8 @@ class MembaseHandler(AsynConDispatcher):
     def send_stats(self):
         if self.command_type == MembaseHandler.VB_STATS_MONITORING:
             self.write_data(MembaseHandler.MEMBASE_VB_STATS_CMD)
+        elif self.command_type == MembaseHandler.CP_STATS_MONITORING:
+            self.write_data(MembaseHandler.MEMBASE_CP_STATS_CMD)
         else:
             self.write_data(MembaseHandler.MEMBASE_KV_STATS_CMD)
 
@@ -245,9 +310,12 @@ class MembaseHandler(AsynConDispatcher):
                 Log.debug(self.vb_stats)
                 self.command_type = MembaseHandler.KV_STATS_MONITORING
                 self.send_stats()
+            elif self.command_type == MembaseHandler.CP_STATS_MONITORING:
+                self.command_type = MembaseHandler.VB_STATS_MONITORING
+                self.send_stats()
             elif self.command_type == MembaseHandler.KV_STATS_MONITORING:
                 Log.debug(self.kv_stats)
-                self.command_type = MembaseHandler.VB_STATS_MONITORING
+                self.command_type = MembaseHandler.CP_STATS_MONITORING
                 self.send_stats()
             else:
                 self.send_version()
