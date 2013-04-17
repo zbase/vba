@@ -192,7 +192,7 @@ class VBSHandler(AsynConDispatcher):
     def handle_write(self):
         #Copy from queue to buffer
         try:
-            while True:
+            while not self.msg_queue.empty():
                 msg = self.msg_queue.get_nowait()
                 if msg is not None:
                     self.rbuf += msg 

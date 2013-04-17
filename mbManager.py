@@ -1,8 +1,9 @@
-from logger import *
 import asyncon
 import threading
+from membaseHandler import *
 from message import *
 from vbsManager import *
+from logger import *
 
 import utils
 
@@ -68,7 +69,7 @@ class MembaseManager(AsynConDispatcher):
         #create a new MembaseHandler instance
         ip,port = host.split(":",1)
         #Fail command handler and stats read handler set here
-        params = {"ip":ip, "port":port, "failCallback":self.mb_fail_callback, 'mgr':self.as_mgr, "timeout":self.hb_interval, "type":MembaseHandler.KV_STATS_COMMAND, "callback":self.mb_stats_callback, "mb_mgr":self}
+        params = {"ip":ip, "port":port, "failCallback":self.mb_fail_callback, 'mgr':self.as_mgr, "timeout":self.hb_interval, "type":MembaseHandler.KV_STATS_MONITORING, "callback":self.mb_stats_callback, "mb_mgr":self}
         mb = MembaseHandler(params)
         self.monitoring_host_list.append(host)
         self.monitoring_agents[host] = {"agent":mb}

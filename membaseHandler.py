@@ -92,7 +92,7 @@ class MembaseHandler(AsynConDispatcher):
         #Creates non blocking socket
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
         if self.addr is None:
-            self.connect((self.ip, port))
+            self.connect((self.ip, int(port)))
         else:
             self.connect(self.addr)
 
