@@ -1,4 +1,5 @@
 import string
+import json
 import socket
 import exceptions
 import struct
@@ -23,6 +24,7 @@ class MembaseHandler(AsynConDispatcher):
     MEMBASE_CP_STATS_CMD = "stats checkpoint\r\n"
     TOT_RETRY_COUNT = 3
     CUR_ITEMS_DELTA = 500
+    LOCAL = "127.0.0.1:11211"
 
     def __init__(self, params):
         sock = None
@@ -50,6 +52,7 @@ class MembaseHandler(AsynConDispatcher):
         self.kv_stats = None
         self.cp_stats = None
         self.host = None
+        self.local = False
 
         if(params.has_key('ip')):
             self.ip = params['ip']
@@ -77,6 +80,8 @@ class MembaseHandler(AsynConDispatcher):
             self.port = str(MembaseHandler.MEMBASE_PORT)
         if params.has_key('mb_mgr'):
             self.mb_mgr = params['mb_mgr']
+        if params.has_key('local'):
+            self.local = params['local']
 
         self.host = self.ip+":"+self.port
         if(params.has_key('map')):
@@ -190,7 +195,10 @@ class MembaseHandler(AsynConDispatcher):
             for row in msg.splitlines():
                 data = regex.split(row)
                 if len(data) == 4:
-                    vb = int(data[1].split('_')[1])
+                    vb_arr = data[1].split('_')
+                    if len(vb_arr) != 2:
+                        continue
+                    vb = int(vb_arr[1])
                     v_map = {}
                     if stats_map.has_key(vb):
                         v_map = stats_map[vb]
@@ -198,19 +206,25 @@ class MembaseHandler(AsynConDispatcher):
                     stats_map[vb] = v_map
 
             #Compare with existing map and report to vbs if there is a difference
+            if not self.local:
+                return stats_map
+
             to_send = False
             if self.cp_stats is None:
                 to_send = True
+                Log.debug("Sending checkpoint stats on init")
             else:
                 for vb, cp_map in stats_map.items():
-                    if (cp_map['state'] == 'active' or cp_map['state'] == 'replica') and  self.cp_stats.has_key(vb):
+                    if (cp_map['state'] == 'active' or cp_map['state'] == 'replica') :
                         if cp_map['open_checkpoint_id'] != self.cp_stats[vb]['open_checkpoint_id']:
+                                Log.debug("Checkpoints not matching for vb: %s %s %s" %(vb, cp_map['open_checkpoint_id'], self.cp_stats[vb]['open_checkpoint_id']))
+                                to_send = True
+                                break
+                        else:
+                            Log.debug("Error for %s while checking vBucket %d map: %s" %(self.ip, vb, cp_map))
                             to_send = True
                             break
-                    else:
-                        to_send = True
-                        break
-
+            
             self.cp_stats = stats_map
             if to_send:
                 self.send_checkpoints()
@@ -233,7 +247,7 @@ class MembaseHandler(AsynConDispatcher):
                 replica_cp.append(int(cp_map['open_checkpoint_id']))
 
         msg = {'Cmd':'CKPOINT', 'Vbuckets':{'Active':active_vb, 'Replica':replica_vb}, 'CheckPoints':{'Active':active_cp, 'Replica':replica_cp}}
-        self.mb_mgr.report_stats(msg)
+        self.mb_mgr.report_stats(json.dumps(msg))
 
     def handle_version_read(self):
         if self.rbuf.find("VERSION") >= 0:
@@ -307,14 +321,12 @@ class MembaseHandler(AsynConDispatcher):
             # Check of connection is healthy
             # Check sent and received count
             if self.command_type == MembaseHandler.VB_STATS_MONITORING:
-                Log.debug(self.vb_stats)
                 self.command_type = MembaseHandler.KV_STATS_MONITORING
                 self.send_stats()
             elif self.command_type == MembaseHandler.CP_STATS_MONITORING:
                 self.command_type = MembaseHandler.VB_STATS_MONITORING
                 self.send_stats()
             elif self.command_type == MembaseHandler.KV_STATS_MONITORING:
-                Log.debug(self.kv_stats)
                 self.command_type = MembaseHandler.CP_STATS_MONITORING
                 self.send_stats()
             else:

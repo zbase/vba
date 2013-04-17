@@ -32,6 +32,7 @@ class VBSManager(asyncon.AsynConDispatcher):
         self.kvstores = None
         self.init_done = False
         self.timer = 10
+        self.error = True
         self.msg_queue = Queue.Queue()
         Log.info("Server name: %s : %d" %(self.VBS_SERVER_NAME, self.VBS_SERVER_PORT))
         asyncon.AsynConDispatcher.__init__(self, None, self.timer, self.as_mgr)
@@ -64,7 +65,9 @@ class VBSManager(asyncon.AsynConDispatcher):
         return self.vbs_config
 
     def handle_timer(self):
-        self.connect()
+        if self.error:
+            self.connect()
+            self.error = False
 
     def connect(self):
         Log.debug("Connecting to VBS")
@@ -79,6 +82,7 @@ class VBSManager(asyncon.AsynConDispatcher):
 
     def error_handler(self, ip, port):
         Log.info("Re-establishing the VBS connection %s %d" %(ip,port))
+        self.error = True
         self.set_timer()
         #self.vbs_con.destroy()
 

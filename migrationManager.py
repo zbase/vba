@@ -23,6 +23,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
         self.as_mgr = asyncon.AsynCon()
         self.timer = 5
         self.send_config_response = False
+        self.config_response = None
         self.ifaces = utils.get_all_interfaces()
         self.err_queue = []
         asyncon.AsynConDispatcher.__init__(self, None, self.timer, self.as_mgr)
@@ -193,20 +194,25 @@ class MigrationManager(asyncon.AsynConDispatcher):
     def monitor(self):
         Log.debug("If send_config_response is set, get checkpoints from backup daemon")
         if self.send_config_response:
+            #TODO:: Remove this when restore daemon is available
+            self.get_checkpoints()
+            ###
             if self.config_response is not None:
-                self.vbs_manager.send_message(self.config_response)
+                self.vbs_manager.send_message(json.dumps(self.config_response))
                 self.send_config_response = False
+                self.config_response = None
             else:
                 t = threading.Thread(target=self.get_checkpoints)
                 t.daemon = True
-                t.start
+                t.start()
 
     def get_checkpoints(self):
         cp_vb_ids = self.config.get("RestoreCheckPoints")
         #TODO: Get the restore checkpoints from backup daemon
         cp_arr = []
-        for i in range(len(cp_vb_ids)):
-            cp_arr.append(0)
+        if cp_vb_ids is not None:
+            for i in range(len(cp_vb_ids)):
+                cp_arr.append(0)
 
         self.config_response = {"Cmd":"Config", "Status":"OK", "Vbuckets":{"Replica":cp_vb_ids}, "CheckPoints":{"Replica":cp_arr}}
         

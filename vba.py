@@ -39,8 +39,6 @@ def parse_options(opts):
             file.close()
 
 if __name__ == '__main__':
-    global vbs_host, vbs_port
-
     mypid = os.getpid() 
     pidfile = open(VBA_PID_FILE, 'w')
     pidfile.write(str(mypid))

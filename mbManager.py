@@ -43,15 +43,16 @@ class MembaseManager(AsynConDispatcher):
         for row in config_data:
             server_list.append(row['Destination'])
         
-        self.hb_interval = config["HeartBeatTime"]
-        server_list = config["Data"]["serverList"]
+        self.hb_interval = self.config["HeartBeatTime"]
 
-        servers_added = utils.diff(server_list, self.self.monitoring_host_list)
+        servers_added = utils.diff(server_list, self.monitoring_host_list)
         servers_removed = utils.diff(self.monitoring_host_list, server_list)
         
         if len(servers_removed) > 0:
             Log.info("Will stop monitoring %s" %(servers_removed))
             for mb in servers_removed:
+                if mb == MembaseManager.LOCAL:
+                    continue
                 self.stop_monitoring(mb)
                 # remove from down list
                 if mb in self.down_list:
@@ -67,9 +68,10 @@ class MembaseManager(AsynConDispatcher):
     def start_monitoring(self, host):
         #Add ip to monitoring list
         #create a new MembaseHandler instance
+        local = (host == MembaseManager.LOCAL)
         ip,port = host.split(":",1)
         #Fail command handler and stats read handler set here
-        params = {"ip":ip, "port":port, "failCallback":self.mb_fail_callback, 'mgr':self.as_mgr, "timeout":self.hb_interval, "type":MembaseHandler.KV_STATS_MONITORING, "callback":self.mb_stats_callback, "mb_mgr":self}
+        params = {"ip":ip, "port":port, "failCallback":self.mb_fail_callback, 'mgr':self.as_mgr, "timeout":self.hb_interval, "type":MembaseHandler.KV_STATS_MONITORING, "callback":self.mb_stats_callback, "mb_mgr":self, "local":local}
         mb = MembaseHandler(params)
         self.monitoring_host_list.append(host)
         self.monitoring_agents[host] = {"agent":mb}
@@ -102,7 +104,7 @@ class MembaseManager(AsynConDispatcher):
     # Stop monitoring and report to vbs
     def mb_fail_callback(self, obj):
         self.down_list.append(obj.host)
-        self.stop_monitoring(host)
+        self.stop_monitoring(obj.host)
         self.vbs_mgr.report_down_node(obj.host)
 
     def report_stats(self, stats_str):
@@ -121,21 +123,23 @@ class MembaseManager(AsynConDispatcher):
     def monitor(self):
         Log.debug("Monitoring")
 
-    def stop_monitoring(self):
+    def stop_all_monitoring(self):
         for k in self.monitoring_agents.keys():
             self.monitoring_agents[k].destroy()
             Log.info("Stopping monitoring %s" %k)
         self.monitoring_agents = {}
 
     def handle_init(self):
-        self.start_monitoring(MembaseManager.LOCAL)
+        if not self.monitoring_agents.has_key(MembaseManager.LOCAL):
+            Log.info("Starting local membase connection")
+            self.start_monitoring(MembaseManager.LOCAL)
 
     def handle_states(self):
         if self.state == MembaseManager.INIT:
             self.handle_init()
         elif self.state == MembaseManager.CONFIG:
             Log.debug("Handle config")
-            self.handle_new_config()
+            self.handle_config()
         elif self.state == MembaseManager.MONITOR:
             self.monitor()
         elif self.state == MembaseManager.STOP:

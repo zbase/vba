@@ -5,7 +5,9 @@ import struct
 import errno
 import time
 import Queue
+import utils
 
+from message import *
 from vbaConstants import *
 from logger import *
 from asyncon import *
@@ -77,6 +79,11 @@ class VBSHandler(AsynConDispatcher):
         if self.addr is not None:
             Log.debug("connecting to %s" %(str(self.addr)))
             self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
+            ifaces = utils.get_all_interfaces()
+            for ip, iface in ifaces.items():
+                if iface == 'eth0':
+                    Log.debug("Binding to %s for VBS connection" %ip)
+                    self.socket.bind((ip,0))
             self.connect(self.addr)
             self.ip,self.port = self.socket.getsockname()
         else:
@@ -195,10 +202,10 @@ class VBSHandler(AsynConDispatcher):
             while not self.msg_queue.empty():
                 msg = self.msg_queue.get_nowait()
                 if msg is not None:
-                    self.rbuf += msg 
+                    self.wbuf += msg 
                 else:
                     break
-            if len(self.rbuf) < 1:
+            if len(self.wbuf) < 1:
                 self.enable_write()
                 return
         except Exception, e:

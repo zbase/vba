@@ -23,8 +23,7 @@ class Migrator(asyncon.AsynConDispatcher):
     CHECKPOINT_STATS_STR = "checkpoint"
     VBUCKET_STATS_STR = "vbucket"
     KVSTORE_STATS_STR = "kvstore"
-    #VBUCKET_MIGRATOR_PATH = "/opt/membase/bin/vbucketmigrator"
-    VBUCKET_MIGRATOR_PATH = "/home/vdhussa/temp/vbucketmigrator/vbucketmigrator"
+    VBUCKET_MIGRATOR_PATH = "/opt/membase/bin/vbucketmigrator"
     INIT, START, CHECK_TAP, TAP_REGISTER, RUN, MONITOR, ERROR, RESTART, FAIL, CHECK_TRANSFER_COMPLETE, TRANSFER_COMPLETE, STOP = range(12)
     RETRY_COUNT = 3
     INIT_TIMER = 2
@@ -229,12 +228,9 @@ class Migrator(asyncon.AsynConDispatcher):
     def handle_fail(self):
         Log.debug("Handle migrator fail")
 
-    def handle_change_config(self):
+    def set_change_config(self):
         self.config = self.migration_mgr.get(self.key)
         self.restart_vbm(Migrator.INIT)
-
-    def set_change_config(self):
-        self.state = Migrator.CHANGE_CONFIG
 
     def monitor(self):
         Log.debug("Monitor vbm")
@@ -255,6 +251,12 @@ class Migrator(asyncon.AsynConDispatcher):
                 Log.error("VBM %s is not running. Will try restarting" %dest)
                 if not self.transfer:
                     self.state = Migrator.RESTART
+                    if self.retry_count > 0:
+                        self.retry_count -= 1
+                    else:
+                        msg = {"Cmd":"REPLICATION_FAIL", "Destination":dest}
+                        vb_stats = self.migration_mgr.vbs_manager.send_message(json.dumps(msg))
+                        self.retry_count = Migrator.RETRY_COUNT
                 else:
                     self.state = Migrator.CHECK_TRANSFER_COMPLETE
             else:
@@ -264,7 +266,7 @@ class Migrator(asyncon.AsynConDispatcher):
 
     def is_alive(self):
         cur_time = time.time()
-        if cur_time - self.monitor_ts > Monitor.MAX_MONITOR_INTERVAL:
+        if cur_time - self.monitor_ts > Migrator.MAX_MONITOR_INTERVAL:
             return False
         else:
             return True
@@ -378,7 +380,7 @@ class Migrator(asyncon.AsynConDispatcher):
 
     def get_items(self, host):
         vblist = self.config.get('vblist')
-        vb_stats = self.migration_manager.vbs_manager.get_vb_stats(host)
+        vb_stats = self.migration_mgr.vbs_manager.get_vb_stats(host)
         stats_map = {}
         for vb in vblist:
             stats_map[vb] = vb_stats[vb]['curr_items']
@@ -390,14 +392,14 @@ class Migrator(asyncon.AsynConDispatcher):
         vblist = self.config.get('vblist')
         Log.info("Transfer is complete for vbuckets: %s" %vblist)
         response = {"Cmd":"TRANSFER_DONE", "Status":"OK", "Destination": dest, Vbuckets:{"Active":vblist, "Replica":[]}}
-        self.migration_manager.vbs_manager.send_message(json.dumps(response))
+        self.migration_mgr.vbs_manager.send_message(json.dumps(response))
         self.stop_migrator()
 
     def handle_transfer_fail(self, vblist):
         dest = self.config.get('destination')
         Log.info("Transfer is complete for vbuckets: %s" %vblist)
         response = {"Cmd":"TRANSFER_DONE", "Status":"ERROR", "Destination": dest, Vbuckets:{"Active":vblist, "Replica":[]}}
-        self.migration_manager.vbs_manager.send_message(json.dumps(response))
+        self.migration_mgr.vbs_manager.send_message(json.dumps(response))
         self.stop_migrator()
 
     def handle_states(self):
