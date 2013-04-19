@@ -16,7 +16,7 @@ VbucketAgent component
 %install
 %{__mkdir_p} %{buildroot}/usr/bin
 %{__mkdir_p} %{buildroot}/etc/init.d
-%{__install} -m 755 %{_topdir}/vba-dma/vba/vba.sh %{buildroot}/etc/init.d
+%{__install} -m 755 %{_topdir}/vba-dma/vba/vba %{buildroot}/etc/init.d
 %{__install} -m 755 %{_topdir}/vba-dma/vba/vbamon.sh %{buildroot}/usr/bin
 %{__install} -m 755 %{_topdir}/vba-dma/vba/*.py %{buildroot}/usr/bin
 
