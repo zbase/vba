@@ -2,7 +2,7 @@
 #
 # chkconfig: - 55 45
 # description:	vba - vbucket agent
-# processname: vbucket_agent.py
+# processname: vba.py
 
 # Source function library.
 . /etc/rc.d/init.d/functions
@@ -39,7 +39,7 @@ start () {
     fi 
 
     # cleanup any vbucket agents, vbucketmigrators still running
-    killproc -p $VBAPIDFILE vbucket_agent.py
+    killproc -p $VBAPIDFILE vba.py
     sudo killall $VBUCKETMIGRATOR 2> /dev/null
 
     $MONVBA > /dev/null 2>&1 &
@@ -61,7 +61,7 @@ start () {
 stop () {
     echo -n $"Stopping $prog: "
     killproc $MONVBA
-    killproc -p $VBAPIDFILE vbucket_agent.py
+    killproc -p $VBAPIDFILE vba.py
     sudo killall $VBUCKETMIGRATOR
     RETVAL=$?
     echo
@@ -87,7 +87,7 @@ case "$1" in
 	stop
 	;;
   status)
-	status -p /var/run/vbs/vba.pid vbucket_agent.py
+	status -p /var/run/vbs/vba.pid vba.py
 	;;
   restart|reload)
 	restart

@@ -15,7 +15,7 @@ VBUCKETMIGRATOR=/opt/membase/bin/vbucketmigrator
 while :; do
     echo "Starting VBA"
     sudo killall $VBUCKETMIGRATOR
-    sudo python /usr/bin/vbucket_agent.py -f /var/tmp/vbs/server_ip &
+    sudo python /usr/bin/vba.py -f /var/tmp/vbs/server_ip &
     RETVAL=$?
     if [ $RETVAL -ne 0 ];then 
         echo $RETVAL
