@@ -42,7 +42,7 @@ start () {
     killproc -p $VBAPIDFILE vba.py
     sudo killall $VBUCKETMIGRATOR 2> /dev/null
 
-    $MONVBA > /dev/null 2>&1 &
+    $MONVBA > /tmp/log1 2>&1 &
     rc=$?
     pid=$!
 

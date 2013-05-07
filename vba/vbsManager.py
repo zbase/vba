@@ -21,7 +21,7 @@ class VBSManager(asyncon.AsynConDispatcher):
     CONFIG  = "CONFIG"
     INIT    = "INIT"
 
-    def __init__(self, vbs_ip, vbs_port, as_mgr, mig_mgr=None, mb_mgr=None, errqueue = None):
+    def __init__(self, vbs_ip, vbs_port, mmPipe, mbPipe, as_mgr, mig_mgr=None, mb_mgr=None, errqueue = None):
         self.as_mgr = as_mgr
         self.VBS_SERVER_NAME = vbs_ip
         self.VBS_SERVER_PORT = vbs_port
@@ -38,6 +38,8 @@ class VBSManager(asyncon.AsynConDispatcher):
         asyncon.AsynConDispatcher.__init__(self, None, self.timer, self.as_mgr)
         self.create_timer()
         self.set_timer()
+        self.mmPipe = mmPipe
+        self.mbPipe = mbPipe
         #self.connect()
 
     def set_timer(self):
@@ -100,6 +102,8 @@ class VBSManager(asyncon.AsynConDispatcher):
             Log.debug("Response handler with %s" %resp_str)
             self.migration_manager.set_config(resp)
             self.membase_manager.set_config(resp)
+            self.mmPipe.send("a")
+            self.mbPipe.send("a")
             if resp.has_key("HeartBeatTime"):
                 hb_interval = resp["HeartBeatTime"]
                 self.vbs_con.set_timeout(hb_interval)
@@ -122,7 +126,7 @@ class VBSManager(asyncon.AsynConDispatcher):
         self.send_message(error)
 
     def report_down_node(self, host):
-        self.send_message(json.dumps({"Cmd":"FAIL", "Destination":ip}))
+        self.send_message(json.dumps({"Cmd":"FAIL", "Destination":host}))
 
     def send_message(self, msg):
         try:

@@ -13,7 +13,7 @@ class MembaseManager(AsynConDispatcher):
     INIT, CONFIG, MONITOR, STOP = range(4)
     LOCAL = "127.0.0.1:11211"
 
-    def __init__(self, vbs_mgr):
+    def __init__(self, vbs_mgr, pipe):
         self.as_mgr = None
         self.monitoring_host_list = []
         self.monitoring_agents = {}
@@ -24,15 +24,22 @@ class MembaseManager(AsynConDispatcher):
         self.as_mgr = asyncon.AsynCon()
         self.timer = 5
         self.config = None
-        asyncon.AsynConDispatcher.__init__(self, None, self.timer, self.as_mgr)
+        asyncon.AsynConDispatcher.__init__(self, pipe, self.timer, self.as_mgr)
         self.create_timer()
         self.set_timer()
+        self.enable_read()
+        self.buffer_size = 10
+
+    def handle_read(self):
+        Log.info("inside read of MembaseManager")
+        self.recv(self.buffer_size)
+        self.handle_timer()
+        self.enable_read()
 
     def handle_config(self):
         if (self.config.has_key('HeartBeatTime')):
             self.hb_interval = self.config['HeartBeatTime']
             self.timer = self.hb_interval
-
         config_data = self.config.get('Data')
         if (config_data == None or len(config_data) == 0):
             Log.warning('VBucket map missing in config')
@@ -61,7 +68,8 @@ class MembaseManager(AsynConDispatcher):
         if len(servers_added) > 0:
             Log.info("Start monitoring %s" %(servers_added))
             for mb in servers_added:
-                self.start_monitoring(mb)
+                if mb != "":
+                    self.start_monitoring(mb)
 
         self.monitoring_host_list = server_list
 

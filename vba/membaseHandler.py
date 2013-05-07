@@ -216,7 +216,7 @@ class MembaseHandler(AsynConDispatcher):
             else:
                 for vb, cp_map in stats_map.items():
                     if (cp_map['state'] == 'active' or cp_map['state'] == 'replica') :
-                        if cp_map['open_checkpoint_id'] != self.cp_stats[vb]['open_checkpoint_id']:
+                        if self.cp_stats.get(vb) == None or (cp_map['open_checkpoint_id'] != self.cp_stats[vb]['open_checkpoint_id']):
                                 Log.debug("Checkpoints not matching for vb: %s %s %s" %(vb, cp_map['open_checkpoint_id'], self.cp_stats[vb]['open_checkpoint_id']))
                                 to_send = True
                                 break

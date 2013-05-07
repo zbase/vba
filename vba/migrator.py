@@ -24,7 +24,7 @@ class Migrator(asyncon.AsynConDispatcher):
     VBUCKET_STATS_STR = "vbucket"
     KVSTORE_STATS_STR = "kvstore"
     VBUCKET_MIGRATOR_PATH = "/opt/membase/bin/vbucketmigrator"
-    INIT, START, CHECK_TAP, TAP_REGISTER, RUN, MONITOR, ERROR, RESTART, FAIL, CHECK_TRANSFER_COMPLETE, TRANSFER_COMPLETE, STOP = range(12)
+    INIT, START, CHECK_TAP, TAP_REGISTER, RUN, MONITOR, ERROR, RESTART, FAIL, CHECK_TRANSFER_COMPLETE, TRANSFER_COMPLETE, STOP, END = range(13)
     RETRY_COUNT = 3
     INIT_TIMER = 2
     MONITOR_TIMER = 10
@@ -33,7 +33,7 @@ class Migrator(asyncon.AsynConDispatcher):
     MAX_MONITOR_INTERVAL = 30
     MAX_ITEM_THRESHOLD = 500
 
-    def __init__(self, key, migration_mgr, mb_mgr, as_mgr):
+    def __init__(self, key, migration_mgr, config, mb_mgr, as_mgr):
         self.migration_mgr = migration_mgr
         self.mb_mgr = mb_mgr
         self.key = key 
@@ -47,7 +47,7 @@ class Migrator(asyncon.AsynConDispatcher):
         self.timer = Migrator.INIT_TIMER
         self.vbm_monitor = None
         self.migrator_stats = None
-        self.config = None
+        self.config = config
         self.vb_stats = None
         self.vb_dest_stats = None
         self.transfer = False
@@ -55,12 +55,17 @@ class Migrator(asyncon.AsynConDispatcher):
         asyncon.AsynConDispatcher.__init__(self, None, self.timer, self.as_mgr)
         self.create_timer()
         self.set_timer()
+        self.start()
 
     def set_timer(self):
         self.timer_event.add(self.timer)
 
     def start(self):
-        self.config = self.migration_mgr.get(self.key)
+        #self.config = self.migration_mgr.get(self.key)
+        if self.config == None:
+            Log.info("config is null for migrator")
+            self.state = Migrator.END
+            return
         source = self.config.get('source')
         dest = self.config.get('destination')
         vblist = self.config.get('vblist')
@@ -75,7 +80,7 @@ class Migrator(asyncon.AsynConDispatcher):
             t = threading.Thread(target=self.init_vbucket, args=(source, vblist, "active"))
             t.daemon = True
             t.start()
-        elif not self.dest_vb_set and not self.transfer:
+        if not self.dest_vb_set and not self.transfer:
             t = threading.Thread(target=self.init_vbucket, args=(dest, vblist, "replica"))
             t.daemon = True
             t.start()
@@ -93,12 +98,15 @@ class Migrator(asyncon.AsynConDispatcher):
             self.retry_count -= 1
 
     def set_vbucket_state(self, hostport, vblist, state):
+        if hostport == "":
+            return 0
         host,port = hostport.split(":")
         mc = mc_bin_client.MemcachedClient(host, int(port))
         Log.debug("setting %s for %s" %(hostport, state))
         try:
             for vb in vblist:
                 op, cas, data = self.setvb(mc, str(vb), state)
+                Log.debug("setting %s for %s vbucket %d" %(hostport, state, vb))
                 print op
         except Exception, e:
             Log.error("Could not setup vBuckets %s" %e)
@@ -115,6 +123,15 @@ class Migrator(asyncon.AsynConDispatcher):
             t.daemon = True
             t.start()
 
+
+    def getTapName(self):
+        source = self.config.get('source')
+        dest = self.config.get('destination')
+        tap_name = "repli-" + ("%X" % zlib.crc32(self.key))
+        Log.info("tap name %s %s %s" % (source, dest, tap_name))    
+        #tap_name = "repli-" + (host+dest2)
+        return tap_name
+
     def check_tap_registered(self):
         source = self.config.get('source')
         vblist = self.config.get('vblist')
@@ -124,7 +141,8 @@ class Migrator(asyncon.AsynConDispatcher):
         try:
             response = mc.stats(Migrator.CHECKPOINT_STATS_STR)
             #Sample vb_0:cursor_checkpoint_id:eq_tapq:repli--47FD90C2
-            tap_name = "repli-" + ("%X" % zlib.crc32(self.key))
+            #tap_name = "repli-" + ("%X" % zlib.crc32(self.key))
+            tap_name = self.getTapName()
             if response is not None and len(response) > 0:
                 found = False
                 for vb in vblist:
@@ -156,10 +174,11 @@ class Migrator(asyncon.AsynConDispatcher):
 
     def call_tap_register(self): 
         source = self.config.get('source')
-        tapname = "repli-" + ("%X" % zlib.crc32(self.key))
+        #tapname = "repli-" + ("%X" % zlib.crc32(self.key))
+        tapname = self.getTapName()
         checkpoints = self.config.get('CheckPoints')
         #TODO: Register checkpoints per vbucket
-        Log.debug("TODO: Register checkpoints per tap. Defaulting to -1 for all")
+        Log.info("TODO: Register checkpoints per tap. Defaulting to -1 for all")
         if utils.register_tap_name(source.split(":"), tapname) == 0:
             self.state = Migrator.RUN
             self.retry_count = Migrator.RETRY_COUNT
@@ -173,7 +192,8 @@ class Migrator(asyncon.AsynConDispatcher):
         dest = self.config.get('destination')
         vblist = self.config.get('vblist')
         interface = self.config.get('interface')
-        tapname = "repli-" + ("%X" % zlib.crc32(self.key))
+        #tapname = "repli-" + ("%X" % zlib.crc32(self.key))
+        tapname = self.getTapName()
 
         vblist_str = ",".join(str(vb) for vb in vblist)
         vbmp_arr = ["sudo", Migrator.VBUCKET_MIGRATOR_PATH, "-h", source, "-b", vblist_str, "-d", dest, "-N", tapname, "-A", ]
@@ -188,7 +208,7 @@ class Migrator(asyncon.AsynConDispatcher):
         # Starting vBucketMigrator
         #self.vbmp = subprocess.Popen(["sudo", Migrator.VBUCKET_MIGRATOR_PATH, "-h", source, "-b", vblist_str, "-d", dest, "-N", tapname, "-A", "-i", interface, "-v", "-r"], stdout=subprocess.PIPE, stderr=subprocess.PIPE) 
         self.vbmp = subprocess.Popen(vbmp_arr, stdout=subprocess.PIPE, stderr=subprocess.PIPE) 
-        Log.debug('Started VBM with pid %d interface %s', self.vbmp.pid, interface)
+        Log.info('Started VBM with pid %d interface %s', self.vbmp.pid, interface)
         Log.info("Switching to monitor mode for %s" %self.key)
         self.state = Migrator.MONITOR
 
@@ -228,8 +248,8 @@ class Migrator(asyncon.AsynConDispatcher):
     def handle_fail(self):
         Log.debug("Handle migrator fail")
 
-    def set_change_config(self):
-        self.config = self.migration_mgr.get(self.key)
+    def set_change_config(self, config):
+        self.config = config
         self.restart_vbm(Migrator.INIT)
 
     def monitor(self):
@@ -237,9 +257,13 @@ class Migrator(asyncon.AsynConDispatcher):
         source = self.config.get('source')
         dest = self.config.get('destination')
 
+        if dest == "":
+            return
+
         if self.vbm_monitor is None:
             (host, port) = dest.split(':')
-            vbm_stats_sock = Migrator.VBM_STATS_SOCK + "." + host
+            (s,p)  = source.split(':')
+            vbm_stats_sock = Migrator.VBM_STATS_SOCK + "." + host + "." + s
             Log.debug("Sock: %s" %vbm_stats_sock)
             params={"addr":vbm_stats_sock, "name":dest, "timeout":Migrator.VBM_TIMER, "mgr":self.as_mgr}
             self.vbm_monitor = mbMigratorHandler. MBMigratorHandler(params)
@@ -249,6 +273,9 @@ class Migrator(asyncon.AsynConDispatcher):
                 Log.debug("VBM progress is fine")
             elif not stats:
                 Log.error("VBM %s is not running. Will try restarting" %dest)
+                if self.vbmp:
+                    (statout, staterr) = self.vbmp.communicate() 
+                    Log.info("out %s err %s" % (statout, staterr))
                 if not self.transfer:
                     self.state = Migrator.RESTART
                     if self.retry_count > 0:
@@ -292,18 +319,31 @@ class Migrator(asyncon.AsynConDispatcher):
             self.vbm_monitor = None
         dest = self.config.get('destination')
         Log.info("Attempting to restart the vBucketMigrator %s" %dest)
-        os.kill(self.vbmp.pid, signal.SIGTERM)
+        if self.vbmp and self.vbmp.poll() == None:
+            os.kill(self.vbmp.pid, signal.SIGTERM)
+        else:
+            Log.info("No pid to restart")
         self.state = state
         self.timer = Migrator.INIT_TIMER
 
     def kill_migrator(self):
-        source = self.config.get('source')
-        dest = self.config.get('destination')
-        self.set_vbucket_state(source, vblist, "dead")
-        self.set_vbucket_state(dest, vblist, "dead")
-        # Stop - kill the VBM and return
-        Log.info('Stop request for key %s, will kill the vbucket migrator (pid %d)', self.key, self.vbmp.pid)
-        os.kill(self.vbmp.pid, signal.SIGTERM)
+        if not self.vbm_monitor is None:
+            self.vbm_monitor.destroy()
+            self.vbm_monitor = None
+        if self.config == None:
+            Log.info("config is null")
+        else:    
+            vblist = self.config.get('vblist')
+            source = self.config.get('source')
+            dest = self.config.get('destination')
+            self.set_vbucket_state(source, vblist, "dead")
+            self.set_vbucket_state(dest, vblist, "dead")
+            # Stop - kill the VBM and return
+            if self.vbmp and self.vbmp.poll() == None:
+                Log.info('Stop request for key %s, will kill the vbucket migrator (pid %d)', self.key, self.vbmp.pid)
+                os.kill(self.vbmp.pid, signal.SIGTERM)
+                Log.info("killing the migrator")        
+        self.state = Migrator.END
 
     def stop_migrator(self):
         self.state = Migrator.STOP
@@ -402,6 +442,10 @@ class Migrator(asyncon.AsynConDispatcher):
         self.migration_mgr.vbs_manager.send_message(json.dumps(response))
         self.stop_migrator()
 
+    def sleep(self):
+        Log.info("sleeping migrator")
+        pass
+
     def handle_states(self):
         Log.info("Current state: %d" %self.state)
         if self.state == Migrator.INIT:
@@ -427,9 +471,9 @@ class Migrator(asyncon.AsynConDispatcher):
         elif self.state == Migrator.RESTART:
             # Handle failure
             self.restart_vbm(Migrator.RUN)
-        elif self.state == Migrator.CHANGE_CONFIG:
+        #elif self.state == Migrator.CHANGE_CONFIG:
             # Handle config change
-            self.change_config()
+         #   self.change_config()
         elif self.state == Migrator.CHECK_TRANSFER_COMPLETE:
             self.check_transfer_complete()
         elif self.state == Migrator.TRANSFER_COMPLETE:
@@ -438,5 +482,6 @@ class Migrator(asyncon.AsynConDispatcher):
     def handle_timer(self):
         Log.debug("Handle timer! %d" %self.state)
         self.handle_states()
-        self.set_timer()
+        if self.state != Migrator.END:
+            self.set_timer()
 

@@ -143,11 +143,13 @@ class VBSHandler(AsynConDispatcher):
         self.gotRes = True
         while len(self.rbuf) > 0:
             if not self.gotSize:
-                if len(self.rbuf) > self.MIN_PACK_SIZE:
+                if len(self.rbuf) >= self.MIN_PACK_SIZE:
                     self.totSize, = struct.unpack("!I", self.rbuf[:self.MIN_PACK_SIZE])
                     Log.debug("Size: %s", str(self.totSize))
                     self.totSize += self.MIN_PACK_SIZE
                     self.gotSize = True
+                else:
+                    return 
             if self.gotSize and len(self.rbuf) < self.totSize:
                 Log.info("returning due to size")
                 return

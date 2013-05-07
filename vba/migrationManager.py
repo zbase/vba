@@ -14,7 +14,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
     INIT, CONFIG, MONITOR, STOP, END = range(5)
     DEFAULT_MB_PORT = 11211
 
-    def __init__(self, vbs_manager):
+    def __init__(self, vbs_manager, vbs_pipe_r, vbs_pipe_w):
         self.rowid = 0
         self.vbtable = {}
         self.transfer_vbtable = {}
@@ -26,18 +26,28 @@ class MigrationManager(asyncon.AsynConDispatcher):
         self.config_response = None
         self.ifaces = utils.get_all_interfaces()
         self.err_queue = []
-        asyncon.AsynConDispatcher.__init__(self, None, self.timer, self.as_mgr)
+        asyncon.AsynConDispatcher.__init__(self, vbs_pipe_r, self.timer, self.as_mgr)
+        self.buffer_size = 10
         self.create_timer()
         self.set_timer()
+        self.enable_read()
+        self.vbs_pipe_w = vbs_pipe_w
 
     def create_migrator(self, key, row):
-        migrator_obj = migrator.Migrator(key, self, None, self.as_mgr)
+        migrator_obj = migrator.Migrator(key, self, row, None, self.as_mgr)
         row['migrator'] = migrator_obj
         return migrator_obj
 
+    def handle_read(self):
+        Log.info("it worked")
+        self.recv(self.buffer_size)
+        #self.handle_states()
+        self.handle_timer()
+        self.enable_read()
+
     def end_migrator(self, key):
         migrator_obj = self.vbtable[key].get('migrator')
-        migrator_obj.stop_migrator()
+        migrator_obj.kill_migrator()
 
     def set_config(self, config):
         self.config = config
@@ -76,12 +86,12 @@ class MigrationManager(asyncon.AsynConDispatcher):
         return ret
 
     def handle_new_config(self):
+        Log.info("inside handle_new_config")
         new_vb_table = {}
         heartbeat_interval = 10
         if ('HeartBeatTime' in self.config):
             heartbeat_interval = self.config['HeartBeatTime']
             self.timer = heartbeat_interval
-
         config_data = self.config.get('Data')
         if (config_data == None or len(config_data) == 0):
             Log.warning('VBucket map missing in config')
@@ -89,7 +99,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
             return
             #return json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":["No Vbucket map in config"]})
 
-        Log.debug('New config from VBS: %s', str(config_data))
+        Log.info('New config from VBS: %s', str(config_data))
 
         # Create a new table(new_vb_table) from the config data
         # The config data is of the form:
@@ -110,6 +120,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
         err_details = []
         for row in config_data:
             try:
+                dest = row.get('Destination')
                 (key, value) = self.parse_config_row(row)
                 (ip,port) = value['source'].split(':')
                 value['interface'] = self.get_iface_for_ip(ip)
@@ -123,6 +134,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
             except RuntimeError, (message):
                 err_details.append(message)
 
+        Log.info("here")
         new_migrators = []
         # Compare old and new vb tables
         if (len(self.vbtable) == 0):    # First time, start VBMs for all rows in new_vb_table
@@ -134,36 +146,49 @@ class MigrationManager(asyncon.AsynConDispatcher):
             #       reset migrator state
             #   else 
             #       start up a new VBM
+            
+            for (k, v) in self.vbtable.iteritems():
+                if k not in new_vb_table:
+                    # Kill the VBM for the row
+                    Log.debug('Killing vbucket migrator for row [%s] with vbucket list %s', k, v['vblist'])
+                    self.end_migrator(k)
+
             for (k, v) in new_vb_table.iteritems():
-                if k in self.vbtable and self.vbtable[k].get('migrator').is_alive():
+                if k in self.vbtable and self.vbtable[k].get('migrator') is not None and self.vbtable[k].get('migrator').is_alive():
+                    if (self.vbtable[k]['vblist'] != v['vblist']):
                     #Copy the existing migrator and reset state
-                    v['migrator'] =  self.vbtable[k].get('migrator')
-                    v['migrator'].set_change_config()
+                    #v['migrator'] =  self.vbtable[k].get('migrator')
+                    #v['migrator'].set_change_config(v)
+                        Log.debug('Vbucket list changed for row [%s] from %s to %s, will restart the vbucket migrator', k, v['vblist'], self.vbtable[k]['vblist'])
+                        self.end_migrator(k)
+                        new_migrators.append(self.create_migrator(k,v))
+                    else:
+                        v['migrator'] = self.vbtable[k]['migrator']
                 else:
+                    if k in self.vbtable and self.vbtable[k].get('migrator') is None:
+                        Log.info("key %s is null %s",str(k), str(self.vbtable))
                     # Start a new VBM
                     Log.debug('Starting a new vbucket migrator for row [%s] with vbucket list %s', k, v['vblist'])
                     new_migrators.append(self.create_migrator(k,v))
 
                 # Iterate over the old table and:
                 #   If the key is not found in the new table, kill the VBM for that row
-                for (k, v) in self.vbtable.iteritems():
-                    if k not in new_vb_table:
-                        # Kill the VBM for the row
-                        Log.debug('Killing vbucket migrator for row [%s] with vbucket list %s', k, v['vblist'])
-                        self.end_migrator(k)
-
+            
         self.vbtable = new_vb_table
 
         Log.info("New table after parsing config: ")
         for (k, v) in new_vb_table.iteritems():
             Log.info(str(v))
 
+        Log.info("is it here")
         self.state = MigrationManager.MONITOR
 
         if (len(err_details) > 0):
+            Log.info("inside err detail")
             self.vbs_manager.send_error(json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":err_details}))
             return False
         else:
+            Log.info("test")
             self.send_config_response = True
             return True
 
@@ -192,12 +217,14 @@ class MigrationManager(asyncon.AsynConDispatcher):
         self.timer_event.add(self.timer)
 
     def monitor(self):
-        Log.debug("If send_config_response is set, get checkpoints from backup daemon")
+        Log.info("If send_config_response is set, get checkpoints from backup daemon")
         if self.send_config_response:
+            Log.info("test")
             #TODO:: Remove this when restore daemon is available
             self.get_checkpoints()
             ###
             if self.config_response is not None:
+                Log.info("test")
                 self.vbs_manager.send_message(json.dumps(self.config_response))
                 self.send_config_response = False
                 self.config_response = None
@@ -215,22 +242,27 @@ class MigrationManager(asyncon.AsynConDispatcher):
                 cp_arr.append(0)
 
         self.config_response = {"Cmd":"Config", "Status":"OK", "Vbuckets":{"Replica":cp_vb_ids}, "CheckPoints":{"Replica":cp_arr}}
-        
+        self.vbs_pipe_w.send("a")
+
     def handle_timer(self):
-        print "Handle timer! %d" %self.state
+        Log.info("ha ha ha")
+        Log.info("Handle timer! %d" %self.state)
         self.handle_states()
         self.set_timer()
 
     def handle_states(self):
+        Log.info("state is %d", self.state)
         if self.state == MigrationManager.INIT:
             Log.debug("Init state... waiting")
         elif self.state == MigrationManager.CONFIG:
             print "Handle config"
             self.handle_new_config()
+            self.monitor()
         elif self.state == MigrationManager.MONITOR:
             self.monitor()
         elif self.state == MigrationManager.STOP:
             self.stop_migrators()
         elif self.state == MigrationManager.END:
             Log.debug("Nothing to do!")
+
 
