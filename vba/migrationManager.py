@@ -4,6 +4,7 @@ import asyncon
 import threading
 import utils
 import json
+import mc_bin_client
 
 from logger import *
 
@@ -39,7 +40,6 @@ class MigrationManager(asyncon.AsynConDispatcher):
         return migrator_obj
 
     def handle_read(self):
-        Log.info("it worked")
         self.recv(self.buffer_size)
         #self.handle_states()
         self.handle_timer()
@@ -233,8 +233,33 @@ class MigrationManager(asyncon.AsynConDispatcher):
                 t.daemon = True
                 t.start()
 
+    def setvb(self, mc, vbid, vbstate, username=None, password=""):
+        if not username is None:
+            mc.sasl_auth_plain(username, password)
+        return mc.set_vbucket_state(int(vbid), vbstate)
+
+    def set_local_vbucket_state(self, vblist, state):
+        hostport = "localhost:11211"
+        host,port = hostport.split(":")
+        mc = mc_bin_client.MemcachedClient(host, int(port))
+        Log.debug("setting %s for %s" %(hostport, state))
+        try:
+            for vb in vblist:
+                op, cas, data = self.setvb(mc, str(vb), state)
+                Log.debug("setting %s for %s vbucket %d" %(hostport, state, vb))
+                print op
+        except Exception, e:
+            Log.error("Could not setup vBuckets %s" %e)
+            return 1
+        finally:
+            mc.close()
+        return 0
+
+    #activate the vbuckets also
     def get_checkpoints(self):
         cp_vb_ids = self.config.get("RestoreCheckPoints")
+        #Need to change the ip 
+        self.set_local_vbucket_state(cp_vb_ids, "replica")
         #TODO: Get the restore checkpoints from backup daemon
         cp_arr = []
         if cp_vb_ids is not None:

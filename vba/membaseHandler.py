@@ -114,7 +114,7 @@ class MembaseHandler(AsynConDispatcher):
         self.enable_timeout()
 
     def handle_connect(self):
-        Log.debug("Connected %s:%s" %(self.ip, self.port))
+        Log.info("Connected %s:%s" %(self.ip, self.port))
         pass
 
     def isConnected(self):
@@ -153,8 +153,8 @@ class MembaseHandler(AsynConDispatcher):
             self.read_callback(self, response)
 
     def handle_vb_stats_read(self):
+        self.recv_count += 1
         if self.rbuf.find(MembaseHandler.STATS_TERM) > 0:
-            self.recv_count += 1
             stats_map = {}
             msg = self.rbuf[:len(self.rbuf)]
             self.rbuf = ""
@@ -172,8 +172,8 @@ class MembaseHandler(AsynConDispatcher):
         return None
 
     def handle_kv_stats_read(self):
+        self.recv_count += 1
         if self.rbuf.find(MembaseHandler.STATS_TERM) > 0:
-            self.recv_count += 1
             stats_map = {}
             msg = self.rbuf[:len(self.rbuf)]
             self.rbuf = ""
@@ -186,8 +186,9 @@ class MembaseHandler(AsynConDispatcher):
         return None
 
     def handle_cp_stats_read(self):
+        self.recv_count += 1
         if self.rbuf.find(MembaseHandler.STATS_TERM) > 0:
-            self.recv_count += 1
+            Log.info("inside handle_cp_stats")
             stats_map = {}
             msg = self.rbuf[:len(self.rbuf)]
             self.rbuf = ""
@@ -294,6 +295,7 @@ class MembaseHandler(AsynConDispatcher):
             self.enable_write()
 
     def reconnect(self):
+        Log.info("inside reconect")
         self.send_count = 0
         self.recv_count = 0
         self.retry_count -= 1
@@ -307,7 +309,7 @@ class MembaseHandler(AsynConDispatcher):
 
     def health(self):
         if self.connected and (self.retry_count > 0) and ((self.send_count - self.recv_count) < MembaseHandler.ERROR_THRESHOLD):
-            Log.debug("Counts: s:%d r:%d" %(self.send_count, self.recv_count))
+            Log.info("Counts: s:%d r:%d" %(self.send_count, self.recv_count))
             return MembaseHandler.HEALTHY
         elif self.retry_count <= 0:
             return MembaseHandler.FAIL

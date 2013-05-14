@@ -123,7 +123,10 @@ class DiskMonitor(asyncon.AsynConDispatcher):
 
             Log.debug("vBuckets failed: %s" %vbuckets_failed)
             self.vbs_mgr.send_error(json.dumps({"Cmd":"DEAD_VBUCKETS", "Status":"ERROR", "Vbuckets":{"Active":vbuckets_failed["active"], "Replica":vbuckets_failed["replica"]}, "DiskFailed":len(err_kv)}))
+            #mark the vbuckets as dead
             Log.info("Marking kvstore(s) offline %s" %err_kv)
+            self.vbs_mgr.migration_manager.set_local_vbucket_state(vbuckets_failed["active"], "dead")
+            self.vbs_mgr.migration_manager.set_local_vbucket_state(vbuckets_failed["replica"], "dead")
             for kv in err_kv:
                 mc.set_flush_param("kvstore_offline", str(kv))
             self.get_kvstores(mc)

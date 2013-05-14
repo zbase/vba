@@ -337,7 +337,8 @@ class Migrator(asyncon.AsynConDispatcher):
             source = self.config.get('source')
             dest = self.config.get('destination')
             self.set_vbucket_state(source, vblist, "dead")
-            self.set_vbucket_state(dest, vblist, "dead")
+            #no need to mark destination as dead
+            #self.set_vbucket_state(dest, vblist, "dead")
             # Stop - kill the VBM and return
             if self.vbmp and self.vbmp.poll() == None:
                 Log.info('Stop request for key %s, will kill the vbucket migrator (pid %d)', self.key, self.vbmp.pid)
