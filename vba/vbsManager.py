@@ -111,7 +111,7 @@ class VBSManager(asyncon.AsynConDispatcher):
             self.handle_init()
 
     def send_ok(self):
-        resp_str = json.dumps({"Cmd":"Config", "Status":"OK"})
+        resp_str = json.dumps({"Cmd":"CONFIG", "Status":"OK"})
         self.send_message(resp_str)
 
     def handle_init(self):

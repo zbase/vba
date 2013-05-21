@@ -4,6 +4,7 @@ import asyncon
 import threading
 import utils
 import json
+import copy
 import mc_bin_client
 
 from logger import *
@@ -63,11 +64,15 @@ class MigrationManager(asyncon.AsynConDispatcher):
             dest = dest + ':' + str(MigrationManager.DEFAULT_MB_PORT)
 
         vblist = row.get('VbId')
+        tvbid = row.get("Transfer_VbId")
 
-        if (source == '' or len(vblist) == 0):
+        if (source == '' or ((vblist == None or len(vblist) == 0) and (tvbid == None or len(tvbid) == 0))):
             raise RuntimeError("For row [" + str(row) + "], source/vbucket list missing")
-            
-        vblist.sort()
+           
+        if vblist:  
+            vblist.sort()
+        else:
+            vblist = []
         key = source + "|" + dest
         value = {}
         value['source'] = source
@@ -93,11 +98,12 @@ class MigrationManager(asyncon.AsynConDispatcher):
             heartbeat_interval = self.config['HeartBeatTime']
             self.timer = heartbeat_interval
         config_data = self.config.get('Data')
-        if (config_data == None or len(config_data) == 0):
+        config_data = self.config.get('Data')
+        checkpoints = self.config.get('RestoreCheckPoints')
+        if ((config_data == None or len(config_data) == 0) and (checkpoints == None or len(checkpoints) == 0)):
             Log.warning('VBucket map missing in config')
-            self.vbs_manager.send_error(json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":["No Vbucket map in config"]}))
+            self.vbs_manager.send_error(json.dumps({"Cmd":"CONFIG", "Status":"ERROR", "Detail":["No Vbucket map in config"]}))
             return
-            #return json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":["No Vbucket map in config"]})
 
         Log.info('New config from VBS: %s', str(config_data))
 
@@ -118,21 +124,26 @@ class MigrationManager(asyncon.AsynConDispatcher):
         #   .
 
         err_details = []
-        for row in config_data:
-            try:
-                dest = row.get('Destination')
-                (key, value) = self.parse_config_row(row)
-                (ip,port) = value['source'].split(':')
-                value['interface'] = self.get_iface_for_ip(ip)
-                new_vb_table[key] = value
-                #Check for transfer and create a new row if needed
-                if value.has_key('Transfer_VbId') and (value['Transfer_VbId'] is not None) and len(value['Transfer_VbId']) > 0:
-                    key_transfer = key+"_transfer"
-                    value['transfer'] = True
-                    value['vblist'] = value['Transfer_VbId']
-                    new_vb_table[key_transfer] = value
-            except RuntimeError, (message):
-                err_details.append(message)
+        if config_data is not None:
+            for row in config_data:
+                try:
+                    dest = row.get('Destination')
+                    (key, value) = self.parse_config_row(row)
+                    (ip,port) = value['source'].split(':')
+                    value['interface'] = self.get_iface_for_ip(ip)
+                    new_vb_table[key] = value
+                    #Check for transfer and create a new row if needed
+                    if value.has_key('Transfer_VbId') and (value['Transfer_VbId'] is not None) and len(value['Transfer_VbId']) > 0:
+                        key_transfer = key+"_transfer"
+                        newvalue = copy.deepcopy(value)
+                        newvalue['transfer'] = True
+                        newvalue['vblist'] = value['Transfer_VbId']
+                        new_vb_table[key_transfer] = newvalue
+                        Log.info("transfer is true. final vblist is %s", str(value['vblist'])) 
+                        if value['vblist'] == None or len(value['vblist']) == 0:
+                            del new_vb_table[key] 
+                except RuntimeError, (message):
+                    err_details.append(message)
 
         Log.info("here")
         new_migrators = []
@@ -146,14 +157,21 @@ class MigrationManager(asyncon.AsynConDispatcher):
             #       reset migrator state
             #   else 
             #       start up a new VBM
-            
+
+            new_vbuckets = {}
+            dead_keys = []
+
             for (k, v) in self.vbtable.iteritems():
                 if k not in new_vb_table:
                     # Kill the VBM for the row
                     Log.debug('Killing vbucket migrator for row [%s] with vbucket list %s', k, v['vblist'])
                     self.end_migrator(k)
+                    dead_keys.append(k)
 
             for (k, v) in new_vb_table.iteritems():
+                for vb in v['vblist']:
+                    new_vbuckets[vb] = v['destination']
+                Log.info("new table data %s", str(v))
                 if k in self.vbtable and self.vbtable[k].get('migrator') is not None and self.vbtable[k].get('migrator').is_alive():
                     if (self.vbtable[k]['vblist'] != v['vblist']):
                     #Copy the existing migrator and reset state
@@ -161,6 +179,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
                     #v['migrator'].set_change_config(v)
                         Log.debug('Vbucket list changed for row [%s] from %s to %s, will restart the vbucket migrator', k, v['vblist'], self.vbtable[k]['vblist'])
                         self.end_migrator(k)
+                        dead_keys.append(k)
                         new_migrators.append(self.create_migrator(k,v))
                     else:
                         v['migrator'] = self.vbtable[k]['migrator']
@@ -173,7 +192,14 @@ class MigrationManager(asyncon.AsynConDispatcher):
 
                 # Iterate over the old table and:
                 #   If the key is not found in the new table, kill the VBM for that row
-            
+         
+            for en in dead_keys:
+                entry = self.vbtable[en]
+                for vb in entry['vblist']:
+                    if vb in new_vbuckets and entry['destination'] != '' and entry['destination'] != new_vbuckets[vb]:
+                        #self.set_vbucket_state(entry['destination'], [vb], "dead") 
+                        Log.info("setting remote vbucket dead %d", vb)
+
         self.vbtable = new_vb_table
 
         Log.info("New table after parsing config: ")
@@ -184,8 +210,8 @@ class MigrationManager(asyncon.AsynConDispatcher):
         self.state = MigrationManager.MONITOR
 
         if (len(err_details) > 0):
-            Log.info("inside err detail")
-            self.vbs_manager.send_error(json.dumps({"Cmd":"Config", "Status":"ERROR", "Detail":err_details}))
+            Log.info("inside err detail %s", str(err_details))
+            self.vbs_manager.send_error(json.dumps({"Cmd":"CONFIG", "Status":"ERROR", "Detail":err_details}))
             return False
         else:
             Log.info("test")
@@ -238,12 +264,11 @@ class MigrationManager(asyncon.AsynConDispatcher):
             mc.sasl_auth_plain(username, password)
         return mc.set_vbucket_state(int(vbid), vbstate)
 
-    def set_local_vbucket_state(self, vblist, state):
-        hostport = "localhost:11211"
-        host,port = hostport.split(":")
-        mc = mc_bin_client.MemcachedClient(host, int(port))
-        Log.debug("setting %s for %s" %(hostport, state))
+    def set_vbucket_state(self, hostport, vblist, state):
         try:
+            host,port = hostport.split(":")
+            mc = mc_bin_client.MemcachedClient(host, int(port))
+            Log.debug("setting %s for %s" %(hostport, state))
             for vb in vblist:
                 op, cas, data = self.setvb(mc, str(vb), state)
                 Log.debug("setting %s for %s vbucket %d" %(hostport, state, vb))
@@ -254,6 +279,9 @@ class MigrationManager(asyncon.AsynConDispatcher):
         finally:
             mc.close()
         return 0
+
+    def set_local_vbucket_state(self, vblist, state):
+        return self.set_vbucket_state("127.0.0.1:11211", vblist, state)
 
     #activate the vbuckets also
     def get_checkpoints(self):
@@ -266,7 +294,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
             for i in range(len(cp_vb_ids)):
                 cp_arr.append(0)
 
-        self.config_response = {"Cmd":"Config", "Status":"OK", "Vbuckets":{"Replica":cp_vb_ids}, "CheckPoints":{"Replica":cp_arr}}
+        self.config_response = {"Cmd":"CONFIG", "Status":"OK", "Vbuckets":{"Replica":cp_vb_ids}, "CheckPoints":{"Replica":cp_arr}}
         self.vbs_pipe_w.send("a")
 
     def handle_timer(self):
