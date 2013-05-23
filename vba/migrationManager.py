@@ -100,10 +100,13 @@ class MigrationManager(asyncon.AsynConDispatcher):
         config_data = self.config.get('Data')
         config_data = self.config.get('Data')
         checkpoints = self.config.get('RestoreCheckPoints')
+
+        """
         if ((config_data == None or len(config_data) == 0) and (checkpoints == None or len(checkpoints) == 0)):
             Log.warning('VBucket map missing in config')
             self.vbs_manager.send_error(json.dumps({"Cmd":"CONFIG", "Status":"ERROR", "Detail":["No Vbucket map in config"]}))
             return
+        """
 
         Log.info('New config from VBS: %s', str(config_data))
 
@@ -197,7 +200,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
                 entry = self.vbtable[en]
                 for vb in entry['vblist']:
                     if vb in new_vbuckets and entry['destination'] != '' and entry['destination'] != new_vbuckets[vb]:
-                        #self.set_vbucket_state(entry['destination'], [vb], "dead") 
+                        self.set_vbucket_state(entry['destination'], [vb], "dead") 
                         Log.info("setting remote vbucket dead %d", vb)
 
         self.vbtable = new_vb_table
