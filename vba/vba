@@ -22,6 +22,10 @@ fi
 RETVAL=0
 prog="vba"
 
+killprocname () {
+    (ps -eo cmd,pid | grep $1 | grep -v grep | awk '{ print $NF }' | xargs kill)  2> /dev/null
+    return $?
+}
 
 start () {
     mkdir -m 755 -p /var/run/vbs
@@ -60,9 +64,10 @@ start () {
 
 stop () {
     echo -n $"Stopping $prog: "
-    killproc $MONVBA
-    killproc -p $VBAPIDFILE vba.py
-    sudo killall $VBUCKETMIGRATOR
+
+    killproc -p $MONPIDFILE
+    killprocname vba.py
+    killall $VBUCKETMIGRATOR 2> /dev/null
     RETVAL=$?
     echo
     if [ $RETVAL -eq 0 ] ; then
@@ -87,7 +92,7 @@ case "$1" in
 	stop
 	;;
   status)
-	status -p /var/run/vbs/vba.pid vba.py
+	status -p $MONPIDFILE vba
 	;;
   restart|reload)
 	restart
