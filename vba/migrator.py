@@ -355,6 +355,8 @@ class Migrator(asyncon.AsynConDispatcher):
                 Log.info('Stop request for key %s, will kill the vbucket migrator (pid %d)', self.key, self.vbmp.pid)
                 os.kill(self.vbmp.pid, signal.SIGTERM)
                 Log.info("killing the migrator")        
+            if utils.deregister_tap_name(source.split(":"), self.getTapName()) != 0:
+                Log.error("Unable to register tapname %s" % self.getTapName())
         self.state = Migrator.END
 
     def stop_migrator(self):

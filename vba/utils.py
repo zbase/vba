@@ -148,6 +148,19 @@ def register_tap_name(host_port, tap_name):
            mc.close()
     return 1
 
+def deregister_tap_name(host_port, tap_name):
+    try:
+        mc = mc_bin_client.MemcachedClient(host_port[0], int(host_port[1]))
+        mc.deregister_tap_client(tap_name)
+    except mc_bin_client.MemcachedError as ne:
+        return 1 
+    except socket.error:
+        return 2
+    finally:
+        if mc:
+           mc.close()
+    return 1
+
 #Diff between two lists
 def diff(a, b):
     b = set(b)

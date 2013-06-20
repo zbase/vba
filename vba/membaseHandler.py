@@ -81,6 +81,7 @@ class MembaseHandler(AsynConDispatcher):
         if params.has_key('mb_mgr'):
             self.mb_mgr = params['mb_mgr']
         if params.has_key('local'):
+            Log.info("got local ip %s %s" % (self.ip, str(self.local)))
             self.local = params['local']
 
         self.host = self.ip+":"+self.port
@@ -157,7 +158,6 @@ class MembaseHandler(AsynConDispatcher):
         if self.rbuf.find(MembaseHandler.STATS_TERM) > 0:
             stats_map = {}
             msg = self.rbuf[:len(self.rbuf)]
-            self.rbuf = ""
             for row in msg.splitlines():
                 data = row.split(' ')
                 if len(data) == 7:
@@ -169,6 +169,7 @@ class MembaseHandler(AsynConDispatcher):
                     stats_map[vb] = stat_map
             self.vb_stats = stats_map
             return stats_map
+        self.rbuf = ""
         return None
 
     def handle_kv_stats_read(self):
@@ -176,19 +177,18 @@ class MembaseHandler(AsynConDispatcher):
         if self.rbuf.find(MembaseHandler.STATS_TERM) > 0:
             stats_map = {}
             msg = self.rbuf[:len(self.rbuf)]
-            self.rbuf = ""
             for row in msg.splitlines():
                 data = row.split(' ')
                 if len(data) == 3:
                     stats_map[data[1]] = data[2]
             self.kv_stats = stats_map
             return stats_map
+        self.rbuf = ""
         return None
 
     def handle_cp_stats_read(self):
         self.recv_count += 1
         if self.rbuf.find(MembaseHandler.STATS_TERM) > 0:
-            Log.info("inside handle_cp_stats")
             stats_map = {}
             msg = self.rbuf[:len(self.rbuf)]
             self.rbuf = ""
@@ -218,19 +218,14 @@ class MembaseHandler(AsynConDispatcher):
                 for vb, cp_map in stats_map.items():
                     if (cp_map['state'] == 'active' or cp_map['state'] == 'replica') :
                         if self.cp_stats.get(vb) == None or (cp_map['open_checkpoint_id'] != self.cp_stats[vb]['open_checkpoint_id']):
-                                Log.debug("Checkpoints not matching for vb: %s %s %s" %(vb, cp_map['open_checkpoint_id'], self.cp_stats[vb]['open_checkpoint_id']))
                                 to_send = True
                                 break
-                        else:
-                            Log.debug("Error for %s while checking vBucket %d map: %s" %(self.ip, vb, cp_map))
-                            to_send = True
-                            break
             
             self.cp_stats = stats_map
             if to_send:
                 self.send_checkpoints()
-
             return stats_map
+        self.rbuf = ""    
         return None
 
     def send_checkpoints(self):

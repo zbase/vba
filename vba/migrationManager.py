@@ -301,7 +301,6 @@ class MigrationManager(asyncon.AsynConDispatcher):
         self.vbs_pipe_w.send("a")
 
     def handle_timer(self):
-        Log.info("ha ha ha")
         Log.info("Handle timer! %d" %self.state)
         self.handle_states()
         self.set_timer()
