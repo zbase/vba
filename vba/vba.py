@@ -56,8 +56,7 @@ def parse_options(opts):
                 file.close()
             except Exception, e:
                 Log.critical("Error in vba config file  %s" %e)
-                vbs_host = line
-                vbs_port = DEFAULT_VBS_PORT
+                sys.exit(1)
 
 def getPipes():
     mmPipe_r, mmPipe_w = socket.socketpair() 
