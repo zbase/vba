@@ -15,12 +15,13 @@ VBUCKETMIGRATOR=/opt/membase/bin/vbucketmigrator
 while :; do
     echo "Starting VBA"
     sudo killall $VBUCKETMIGRATOR
-    sudo python /usr/bin/vba.py -f /var/tmp/vbs/server_ip &
+    sudo python /usr/bin/vba.py -f /etc/sysconfig/vbs_server_ip &
     RETVAL=$?
     if [ $RETVAL -ne 0 ];then 
         echo $RETVAL
         exit 0
     fi
+    echo $! > $PIDFILE
 
     while :; do
         sleep 10        

@@ -38,21 +38,26 @@ def parse_options(opts):
     global vbs_host, vbs_port
     for o,a in opts:
         if (o == "-f"):
-            file = open(a) 
-            for line in file:
-                line = line.strip('\n')
-                if (line.find(':') != -1):
-                    vbs_host,vbs_port = line.split(":")
-                    if (vbs_host == ''):
-                        vbs_host = DEFAULT_VBS_HOST
-                    if (vbs_port == ''):
+            try:
+                file = open(a) 
+                for line in file:
+                    line = line.strip('\n')
+                    if (line.find(':') != -1):
+                        vbs_host,vbs_port = line.split(":")
+                        if (vbs_host == ''):
+                            vbs_host = DEFAULT_VBS_HOST
+                        if (vbs_port == ''):
+                            vbs_port = DEFAULT_VBS_PORT
+                        else:
+                            vbs_port = int(vbs_port)
+                    elif (line != ''):
+                        vbs_host = line
                         vbs_port = DEFAULT_VBS_PORT
-                    else:
-                        vbs_port = int(vbs_port)
-                elif (line != ''):
-                    vbs_host = line
-                    vbs_port = DEFAULT_VBS_PORT
-            file.close()
+                file.close()
+            except Exception, e:
+                Log.critical("Error in vba config file  %s" %e)
+                vbs_host = line
+                vbs_port = DEFAULT_VBS_PORT
 
 def getPipes():
     mmPipe_r, mmPipe_w = socket.socketpair() 
