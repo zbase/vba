@@ -5,7 +5,7 @@ Version:      1.0.0.0
 Release:      7
 Group:        Development/Languages
 License:      zynga 
-Requires:     python-libevent, python-simplejson
+Requires:     python-libevent
 BuildRoot:    %{_tmppath}/%{name}-%{version}-root-%(%{__id_u} -n)
 
 Distribution:	VBA
