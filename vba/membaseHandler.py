@@ -173,6 +173,7 @@ class MembaseHandler(AsynConDispatcher):
         if self.rbuf.find(MembaseHandler.STATS_TERM) > 0:
             stats_map = {}
             msg = self.rbuf[:len(self.rbuf)]
+            self.rbuf = ""
             for row in msg.splitlines():
                 data = row.split(' ')
                 if len(data) == 7:
@@ -192,6 +193,7 @@ class MembaseHandler(AsynConDispatcher):
         if self.rbuf.find(MembaseHandler.STATS_TERM) > 0:
             stats_map = {}
             msg = self.rbuf[:len(self.rbuf)]
+            self.rbuf = ""
             for row in msg.splitlines():
                 data = row.split(' ')
                 if len(data) == 3:
