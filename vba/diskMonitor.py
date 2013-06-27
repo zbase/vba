@@ -51,6 +51,7 @@ class DiskMonitor(asyncon.AsynConDispatcher):
         asyncon.AsynConDispatcher.__init__(self, None, self.timer, self.as_mgr)
         self.create_timer()
         self.set_timer()
+        self.get_kvstores()
         self.state = DiskMonitor.MONITOR
 
     def set_timer(self):
@@ -190,9 +191,6 @@ class DiskMonitor(asyncon.AsynConDispatcher):
         #INIT, START, MONITOR, STOP
         if self.state == DiskMonitor.INIT:
             Log.debug("Initialize state")
-        elif self.state == DiskMonitor.START:
-            pass
-            #self.start()
         elif self.state == DiskMonitor.MONITOR:
             self.monitor()
         elif self.state == DiskMonitor.STOP:
