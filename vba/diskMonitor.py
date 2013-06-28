@@ -32,7 +32,7 @@ class DiskMonitor(asyncon.AsynConDispatcher):
     TIMER = 5
     VBUCKET_STAT_STR = "vbucket"
     KVSTORE_STATS_STR = "kvstore"
-    NUM_KVSTORE_KEY = "num_kvstores"
+    KVSTORE_ID_KEY = "id"
     ONLINE = "online"
     COMMIT_FAILED_THRESHOLD = 5
 
@@ -44,72 +44,44 @@ class DiskMonitor(asyncon.AsynConDispatcher):
         self.timer = DiskMonitor.TIMER
         self.kv_stores = None
         self.cur_kv_stores = None
-        self.commit_fails = None
-        self.commit_fails_cur = None
         self.host = host
         self.port = port
         asyncon.AsynConDispatcher.__init__(self, None, self.timer, self.as_mgr)
         self.create_timer()
         self.set_timer()
-        self.get_kvstores()
         self.state = DiskMonitor.MONITOR
 
     def set_timer(self):
         self.timer_event.add(self.timer)
 
     def get_kvstores(self, mc = None):
-        kvstores = None
         if mc is None:
-            kvstores = self.vbs_mgr.get_kv_stats(self.host+":"+str(self.port))
-
-        if kvstores is None:
-            if mc is None:
-                mc = mc_bin_client.MemcachedClient(self.host, self.port)
+            mc = mc_bin_client.MemcachedClient(self.host, self.port)
             kvstores = []
-            try:
-                kvstats = mc.stats(DiskMonitor.KVSTORE_STATS_STR)
-                num_kvstores = int(kvstats[DiskMonitor.NUM_KVSTORE_KEY])
-                num_kvstores += 1
-                for i in range(1,num_kvstores):
-                    key = "kvstore%d:status" %i
-                    if kvstats[key] == DiskMonitor.ONLINE:
-                        kvstores.append(i)
-            except Exception, e:
-                Log.error("Unable to get kvstats %s" %e)
-                return
-            finally:
-                mc.close()
-        self.kv_stores = kvstores
-        self.state = DiskMonitor.MONITOR
-        self.vbs_mgr.set_kvstores(self.kv_stores)
-        return kvstores
-
-    def get_commit_fails(self):
-        commit_fail_key_prefix = "ep_item_commit_failed_"
-        mc = mc_bin_client.MemcachedClient(self.host, self.port)
         try:
-            stats = mc.stats()
-            commit_fails = {}
-            for kv in self.kv_stores:
-                kv_key = commit_fail_key_prefix+str(kv-1)
-                commit_fails[kv] = int(stats[kv_key])
-            if self.commit_fails_cur is not None and (self.commit_fails is None):
-                self.commit_fails = self.commit_fails_cur
-            Log.debug("Setting commit fails cur to %s" %commit_fails)
-            self.commit_fails_cur = commit_fails
+            kvstats = mc.stats(DiskMonitor.KVSTORE_STATS_STR)
+            for k,v in kvstats.items():
+                r = k.split(":") 
+                if len(r) < 2 or r[1] != DiskMonitor.KVSTORE_ID_KEY:
+                    continue
+                key = r[0] + ":status"
+                if kvstats[key] == DiskMonitor.ONLINE:
+                    kvstores.append(int(v))
+            Log.debug("kvstore list is  %s" % kvstores)
         except Exception, e:
-            Log.critical("Unable to get local stats %s" %e)
+            Log.error("Unable to get kvstats %s" %e)
+            return
         finally:
             mc.close()
+        self.vbs_mgr.set_kvstores(kvstores)
+        return kvstores
 
     def monitor(self):
         err_kv = []
-        if self.commit_fails is not None and len(self.commit_fails) > 0:
-            #Check if the fails diff is within the threshold
-            for k,count in self.commit_fails_cur.items():
-                count_old = self.commit_fails[k]
-                if (count - count_old) >  DiskMonitor.COMMIT_FAILED_THRESHOLD:
-                    err_kv.append(k)
+        kv_store = self.get_kvstores()
+        if self.kv_stores is not None:
+            err_kv = list(set(self.kv_stores) - set(kv_store))
+        self.kv_stores = kv_store
 
         if len(err_kv) > 0:
             # Mark kvstore as offline and report
@@ -124,10 +96,6 @@ class DiskMonitor(asyncon.AsynConDispatcher):
         else:
             Log.debug("Disk is fine!")
 
-        t = threading.Thread(target=self.get_commit_fails)
-        t.daemon = True
-        t.start()
-
     def report_kvstores(self, err_kv, vb_stats = None):
         #send error to vbs
         #mark vbuckets dead
@@ -141,12 +109,9 @@ class DiskMonitor(asyncon.AsynConDispatcher):
             Log.debug("vBuckets failed: %s" %vbuckets_failed)
             self.vbs_mgr.send_error(json.dumps({"Cmd":"DEAD_VBUCKETS", "Status":"ERROR", "Vbuckets":{"Active":vbuckets_failed["active"], "Replica":vbuckets_failed["replica"]}, "DiskFailed":len(err_kv)}))
             #mark the vbuckets as dead
-            Log.info("Marking kvstore(s) offline %s" %err_kv)
+            Log.info("kvstore(s) offline %s" %err_kv)
             self.vbs_mgr.migration_manager.set_local_vbucket_state(vbuckets_failed["active"], "dead")
             self.vbs_mgr.migration_manager.set_local_vbucket_state(vbuckets_failed["replica"], "dead")
-            for kv in err_kv:
-                mc.set_flush_param("kvstore_offline", str(kv))
-            self.get_kvstores(mc)
         except Exception, e:
             Log.critical("Problem handling kvstores %s. %s" %(err_kv, e))
         finally:
@@ -155,9 +120,11 @@ class DiskMonitor(asyncon.AsynConDispatcher):
     def get_failed_vbuckets_stats(self, vb_stats, err_kv):
         active_list = []
         replica_list = []
+        Log.info("map passed %s" % str(vb_stats))
+
         for vb,map in vb_stats.items():
-            if (int(map["kvstore"])+1) in err_kv:
-                if map["status"] == "active":
+            if (int(map["kvstore"])) in err_kv:
+                if map["state"] == "active":
                     active_list.append(vb)
                 else:
                     replica_list.append(vb)
@@ -172,7 +139,7 @@ class DiskMonitor(asyncon.AsynConDispatcher):
             vmap = {}
             for k,v in response.items():
                 vb = int(k.split("_")[1])
-                v = "status "+v
+                v = "state "+v
                 vals =v.split(" ")
                 m={}
                 for x in range(0,len(vals),2):
