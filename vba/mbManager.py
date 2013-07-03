@@ -19,6 +19,7 @@ from membaseHandler import *
 from message import *
 from vbsManager import *
 from logger import *
+from Queue import *
 
 import utils
 
@@ -27,6 +28,7 @@ import utils
 class MembaseManager(AsynConDispatcher):
     INIT, CONFIG, MONITOR, STOP = range(4)
     LOCAL = "127.0.0.1:11211"
+    TIMEOUT = 10
 
     def __init__(self, vbs_mgr, pipe):
         self.as_mgr = None
@@ -38,12 +40,12 @@ class MembaseManager(AsynConDispatcher):
         self.vbs_mgr = vbs_mgr
         self.as_mgr = asyncon.AsynCon()
         self.timer = 5
-        self.config = None
         asyncon.AsynConDispatcher.__init__(self, pipe, self.timer, self.as_mgr)
         self.create_timer()
         self.set_timer()
         self.enable_read()
         self.buffer_size = 10
+        self.config = Queue()
 
     def handle_read(self):
         Log.info("inside read of MembaseManager")
@@ -52,10 +54,14 @@ class MembaseManager(AsynConDispatcher):
         self.enable_read()
 
     def handle_config(self):
-        if (self.config.has_key('HeartBeatTime')):
-            self.hb_interval = self.config['HeartBeatTime']
+        try:
+            config = self.config.get()
+        except:
+            return   
+        if (config.has_key('HeartBeatTime')):
+            self.hb_interval = config['HeartBeatTime']
             self.timer = self.hb_interval
-        config_data = self.config.get('Data')
+        config_data = config.get('Data')
         if (config_data == None or len(config_data) == 0):
             Log.warning('VBucket map missing in config')
             return False
@@ -65,7 +71,7 @@ class MembaseManager(AsynConDispatcher):
         for row in config_data:
             server_list.append(row['Destination'])
         
-        self.hb_interval = self.config["HeartBeatTime"]
+        self.hb_interval = config["HeartBeatTime"]
 
         servers_added = utils.diff(server_list, self.monitoring_host_list)
         servers_removed = utils.diff(self.monitoring_host_list, server_list)
@@ -94,7 +100,8 @@ class MembaseManager(AsynConDispatcher):
         local = (host == MembaseManager.LOCAL)
         ip,port = host.split(":",1)
         #Fail command handler and stats read handler set here
-        params = {"ip":ip, "port":port, "failCallback":self.mb_fail_callback, 'mgr':self.as_mgr, "timeout":self.hb_interval, "type":MembaseHandler.KV_STATS_MONITORING, "callback":self.mb_stats_callback, "mb_mgr":self, "local":local}
+        params = {"ip":ip, "port":port, "failCallback":self.mb_fail_callback, 'mgr':self.as_mgr, "timeout":MembaseManager.TIMEOUT,
+                "type":MembaseHandler.KV_STATS_MONITORING, "callback":self.mb_stats_callback, "mb_mgr":self, "local":local}
         mb = MembaseHandler(params)
         self.monitoring_host_list.append(host)
         self.monitoring_agents[host] = {"agent":mb}
@@ -140,7 +147,7 @@ class MembaseManager(AsynConDispatcher):
         self.timer_event.add(self.timer)
 
     def set_config(self, config):
-        self.config = config
+        self.config.put(config)
         self.state = MembaseManager.CONFIG
 
     def monitor(self):
@@ -162,7 +169,8 @@ class MembaseManager(AsynConDispatcher):
             self.handle_init()
         elif self.state == MembaseManager.CONFIG:
             Log.debug("Handle config")
-            self.handle_config()
+            while self.config.empty() == False:
+                self.handle_config()
         elif self.state == MembaseManager.MONITOR:
             self.monitor()
         elif self.state == MembaseManager.STOP:

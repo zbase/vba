@@ -21,7 +21,9 @@ import utils
 import json
 import copy
 import mc_bin_client
+import time
 
+from Queue import *
 from logger import *
 
 Log = getLogger()
@@ -48,6 +50,8 @@ class MigrationManager(asyncon.AsynConDispatcher):
         self.create_timer()
         self.set_timer()
         self.enable_read()
+        self.config = Queue()
+        self.recentConfig = None
         self.vbs_pipe_w = vbs_pipe_w
 
     def create_migrator(self, key, row):
@@ -66,7 +70,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
         migrator_obj.kill_migrator()
 
     def set_config(self, config):
-        self.config = config
+        self.config.put(config)
         self.state = MigrationManager.CONFIG
 
     def parse_config_row(self, row):
@@ -109,12 +113,17 @@ class MigrationManager(asyncon.AsynConDispatcher):
         Log.info("inside handle_new_config")
         new_vb_table = {}
         heartbeat_interval = 10
-        if ('HeartBeatTime' in self.config):
-            heartbeat_interval = self.config['HeartBeatTime']
+        try:
+            config = self.config.get()
+            self.recentConfig = config
+        except:
+            return
+        if ('HeartBeatTime' in config):
+            heartbeat_interval = config['HeartBeatTime']
             self.timer = heartbeat_interval
-        config_data = self.config.get('Data')
-        config_data = self.config.get('Data')
-        checkpoints = self.config.get('RestoreCheckPoints')
+        config_data = config.get('Data')
+        config_data = config.get('Data')
+        checkpoints = config.get('RestoreCheckPoints')
 
         """
         if ((config_data == None or len(config_data) == 0) and (checkpoints == None or len(checkpoints) == 0)):
@@ -303,7 +312,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
 
     #activate the vbuckets also
     def get_checkpoints(self):
-        cp_vb_ids = self.config.get("RestoreCheckPoints")
+        cp_vb_ids = self.recentConfig.get("RestoreCheckPoints")
         #Need to change the ip 
         self.set_local_vbucket_state(cp_vb_ids, "replica")
         #TODO: Get the restore checkpoints from backup daemon
@@ -326,8 +335,8 @@ class MigrationManager(asyncon.AsynConDispatcher):
             Log.debug("Init state... waiting")
         elif self.state == MigrationManager.CONFIG:
             print "Handle config"
-            self.handle_new_config()
-            self.monitor()
+            while self.config.empty() == False:
+                self.handle_new_config()
         elif self.state == MigrationManager.MONITOR:
             self.monitor()
         elif self.state == MigrationManager.STOP:

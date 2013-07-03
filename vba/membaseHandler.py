@@ -55,7 +55,7 @@ class MembaseHandler(AsynConDispatcher):
         self.cmd_type = None
         self.send_count = 0
         self.recv_count = 0
-        self.timeout = 10
+        self.timeout = 5
         port = None
         self.map = None
         self.mgr = None
