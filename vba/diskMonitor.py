@@ -24,7 +24,7 @@ MEMBASE_LIB_DIR="/opt/membase/lib/python"
 sys.path.append(MEMBASE_LIB_DIR)
 
 import mc_bin_client
-from logger import *
+from vbaLogger import *
 
 Log = getLogger()
 
@@ -70,7 +70,7 @@ class DiskMonitor(asyncon.AsynConDispatcher):
             Log.debug("kvstore list is  %s" % kvstores)
         except Exception, e:
             Log.error("Unable to get kvstats %s" %e)
-            return
+            raise
         finally:
             mc.close()
         self.vbs_mgr.set_kvstores(kvstores)
@@ -78,7 +78,12 @@ class DiskMonitor(asyncon.AsynConDispatcher):
 
     def monitor(self):
         err_kv = []
-        kv_store = self.get_kvstores()
+        try:
+            kv_store = self.get_kvstores()
+        except Exception, e:
+            Log.error("%s" %e)
+            return
+
         if self.kv_stores is not None:
             err_kv = list(set(self.kv_stores) - set(kv_store))
         self.kv_stores = kv_store

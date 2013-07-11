@@ -22,7 +22,7 @@ import errno
 import time
 import re
 
-from logger import *
+from vbaLogger import *
 from asyncon import *
 
 Log = getLogger()

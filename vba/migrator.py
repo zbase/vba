@@ -30,7 +30,7 @@ import utils
 import asyncon
 import subprocess
 import mbMigratorHandler 
-from logger import *
+from vbaLogger import *
 
 Log = getLogger()
 
@@ -196,11 +196,15 @@ class Migrator(asyncon.AsynConDispatcher):
     def call_tap_register(self): 
         source = self.config.get('source')
         #tapname = "repli-" + ("%X" % zlib.crc32(self.key))
+        vblist = self.config.get('vblist')
         tapname = self.getTapName()
         checkpoints = self.config.get('CheckPoints')
-        #TODO: Register checkpoints per vbucket
-        Log.info("TODO: Register checkpoints per tap. Defaulting to -1 for all")
-        if utils.register_tap_name(source.split(":"), tapname) == 0:
+        if checkpoints == None:
+            checkpoints = []
+        diff = len(vblist) - len(checkpoints)
+        ckpoint_vblist = [ vblist[i] for i in range(len(checkpoints)) ]
+        Log.info("Checkpoints and vbuckets and total vbuckets %s %s %s" %(checkpoints, ckpoint_vblist, vblist))    
+        if utils.register_tap_name(source.split(":"), tapname, vblist, ckpoint_vblist, checkpoints) == 0:
             self.state = Migrator.RUN
             self.retry_count = Migrator.RETRY_COUNT
         else:
@@ -352,7 +356,7 @@ class Migrator(asyncon.AsynConDispatcher):
         self.state = state
         self.timer = Migrator.INIT_TIMER
 
-    def kill_migrator(self):
+    def kill_migrator(self, deregister=True):
         if not self.vbm_monitor is None:
             self.vbm_monitor.destroy()
             self.vbm_monitor = None
@@ -369,9 +373,9 @@ class Migrator(asyncon.AsynConDispatcher):
             if self.vbmp and self.vbmp.poll() == None:
                 Log.info('Stop request for key %s, will kill the vbucket migrator (pid %d)', self.key, self.vbmp.pid)
                 os.kill(self.vbmp.pid, signal.SIGTERM)
-                Log.info("killing the migrator")        
-            if utils.deregister_tap_name(source.split(":"), self.getTapName()) != 0:
-                Log.error("Unable to register tapname %s" % self.getTapName())
+                Log.info("killing the migrator")    
+            if deregister and utils.deregister_tap_name(source.split(":"), self.getTapName()) != 0:
+                Log.error("Unable to deregister tapname %s" % self.getTapName())
         self.state = Migrator.END
 
     def stop_migrator(self):

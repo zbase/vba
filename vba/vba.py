@@ -23,7 +23,7 @@ import asyncon
 import getopt
 import diskMonitor
 import socket
-from logger import *
+from vbaLogger import *
 
 #VBA_PID_FILE = "/var/run/vbs/vba.pid"
 VBA_PID_FILE = "/tmp/vba.pid"

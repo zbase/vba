@@ -22,9 +22,13 @@ import json
 import copy
 import mc_bin_client
 import time
+import sys
 
 from Queue import *
-from logger import *
+from vbaLogger import *
+from vbaConstants import *
+sys.path.insert(0, BACKUP_PATH) 
+from vbucket_restore import vbucketRestore 
 
 Log = getLogger()
 
@@ -42,17 +46,19 @@ class MigrationManager(asyncon.AsynConDispatcher):
         self.as_mgr = asyncon.AsynCon()
         self.timer = 5
         self.send_config_response = False
-        self.config_response = None
+        self.config_response = Queue()
         self.ifaces = utils.get_all_interfaces()
         self.err_queue = []
         asyncon.AsynConDispatcher.__init__(self, vbs_pipe_r, self.timer, self.as_mgr)
         self.buffer_size = 10
         self.create_timer()
         self.set_timer()
+        self.restore = vbucketRestore()
         self.enable_read()
         self.config = Queue()
         self.recentConfig = None
         self.vbs_pipe_w = vbs_pipe_w
+        self.restore_vbuckets = {}
 
     def create_migrator(self, key, row):
         migrator_obj = migrator.Migrator(key, self, row, None, self.as_mgr)
@@ -65,9 +71,9 @@ class MigrationManager(asyncon.AsynConDispatcher):
         self.handle_timer()
         self.enable_read()
 
-    def end_migrator(self, key):
+    def end_migrator(self, key, deregister=True):
         migrator_obj = self.vbtable[key].get('migrator')
-        migrator_obj.kill_migrator()
+        migrator_obj.kill_migrator(deregister)
 
     def set_config(self, config):
         self.config.put(config)
@@ -205,7 +211,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
                     #v['migrator'] =  self.vbtable[k].get('migrator')
                     #v['migrator'].set_change_config(v)
                         Log.debug('Vbucket list changed for row [%s] from %s to %s, will restart the vbucket migrator', k, v['vblist'], self.vbtable[k]['vblist'])
-                        self.end_migrator(k)
+                        self.end_migrator(k, False)
                         dead_keys.append(k)
                         new_migrators.append(self.create_migrator(k,v))
                     else:
@@ -272,19 +278,14 @@ class MigrationManager(asyncon.AsynConDispatcher):
     def monitor(self):
         Log.info("If send_config_response is set, get checkpoints from backup daemon")
         if self.send_config_response:
-            Log.info("test")
+            Log.info("contacting backup daemon")
             #TODO:: Remove this when restore daemon is available
-            self.get_checkpoints()
-            ###
-            if self.config_response is not None:
-                Log.info("test")
-                self.vbs_manager.send_message(json.dumps(self.config_response))
-                self.send_config_response = False
-                self.config_response = None
-            else:
-                t = threading.Thread(target=self.get_checkpoints)
-                t.daemon = True
-                t.start()
+            t = threading.Thread(target=self.get_checkpoints)
+            t.daemon = True
+            t.start()
+            self.send_config_response = False
+        while self.config_response.empty() is False:
+            self.vbs_manager.send_message(json.dumps(self.config_response.get()))
 
     def setvb(self, mc, vbid, vbstate, username=None, password=""):
         if not username is None:
@@ -313,15 +314,37 @@ class MigrationManager(asyncon.AsynConDispatcher):
     #activate the vbuckets also
     def get_checkpoints(self):
         cp_vb_ids = self.recentConfig.get("RestoreCheckPoints")
-        #Need to change the ip 
-        self.set_local_vbucket_state(cp_vb_ids, "replica")
-        #TODO: Get the restore checkpoints from backup daemon
-        cp_arr = []
-        if cp_vb_ids is not None:
-            for i in range(len(cp_vb_ids)):
-                cp_arr.append(0)
+        if cp_vb_ids is None:
+            return
+        for id in cp_vb_ids[:]:
+            if self.restore_vbuckets.get(id) == None:
+                self.restore_vbuckets[id] = 1
+            else:
+                cp_vb_ids.remove(id)
 
-        self.config_response = {"Cmd":"CONFIG", "Status":"OK", "Vbuckets":{"Replica":cp_vb_ids}, "CheckPoints":{"Replica":cp_arr}}
+        self.set_local_vbucket_state(cp_vb_ids, "replica")
+        cp_arr = []
+        Log.info("Restoring vbuckets %s" % cp_vb_ids)
+        for i in range(len(cp_vb_ids)):
+            cp_arr.append(0)
+        ret, cp_arr_map = self.restore.get_checkpoints(cp_vb_ids)
+        if ret:
+            restore_status = self.restore.restore_vbuckets(cp_vb_ids)
+            for i in range(len(cp_vb_ids)):
+                statusMap = restore_status[i]
+                ckpoint = cp_arr_map.get(cp_vb_ids[i])
+                if statusMap['status'] == "Restore successful" and ckpoint != None and int(ckpoint) != -1:
+                    cp_arr[i] = int(ckpoint)
+                    
+        Log.info("Restore checkpoint map %s %s" % (cp_vb_ids, cp_arr))
+        for id in cp_vb_ids:
+            try:    
+                del self.restore_vbuckets[id]
+            except Exception, e:
+                Log.error("Could not find vBuckets for restore %s" %e)
+
+        data = {"Cmd":"CONFIG", "Status":"OK", "Vbuckets":{"Replica":cp_vb_ids}, "CheckPoints":{"Replica":cp_arr}}
+        self.config_response.put(data) 
         self.vbs_pipe_w.send("a")
 
     def handle_timer(self):

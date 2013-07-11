@@ -24,7 +24,7 @@ import utils
 
 from message import *
 from vbaConstants import *
-from logger import *
+from vbaLogger import *
 from asyncon import *
 
 Log = getLogger()

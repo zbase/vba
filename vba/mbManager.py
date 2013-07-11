@@ -18,7 +18,7 @@ import threading
 from membaseHandler import *
 from message import *
 from vbsManager import *
-from logger import *
+from vbaLogger import *
 from Queue import *
 
 import utils

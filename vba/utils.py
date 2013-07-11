@@ -110,7 +110,6 @@ def encodeVBucketList(vbl):
         vals.append(struct.pack("!H", v))
     return ''.join(vals)
 
-
 def encodeTAPConnectOpts(opts):
     header = 0
     val = []
@@ -120,15 +119,19 @@ def encodeTAPConnectOpts(opts):
             val.append(struct.pack(memcacheConstants.TAP_FLAG_TYPES[op],
                                    opts[op]))
         elif op == memcacheConstants.TAP_FLAG_CHECKPOINT:
-            if opts[op][2] >= 0:
-                val.append(struct.pack(">HHQ", opts[op][0], opts[op][1], opts[op][2]))
+            total = int(opts[op][0])
+            if total == 0:
+                continue
+            val.append(struct.pack(">H", total))
+            for i in range(total):
+                val.append(struct.pack(">HQ", opts[op][1][i], opts[op][2][i]))
         elif op == memcacheConstants.TAP_FLAG_LIST_VBUCKETS:
             val.append(encodeVBucketList(opts[op]))
         else:
             val.append(opts[op])
     return struct.pack(">I", header), ''.join(val)
 
-def register_tap_name(host_port, tap_name):
+def register_tap_name(host_port, tap_name, vblist, ckpoint_vblist, cklist):
     is_registration = True
     closed_checkpoint_only = 0x00
     last_closed_checkpoint_id = -1
@@ -143,12 +146,12 @@ def register_tap_name(host_port, tap_name):
         ## The three args for TAP_FLAG_CHECKPOINT represents the number of vbuckets,
         ## the list of vbucket ids, and their last closed checkpoint ids. At this time,
         ## we only support a single vbucket 0.
-        memcacheConstants.TAP_FLAG_CHECKPOINT: (1, 0, int(last_closed_checkpoint_id)),
+        memcacheConstants.TAP_FLAG_CHECKPOINT: (len(ckpoint_vblist), ckpoint_vblist, cklist),
         memcacheConstants.TAP_FLAG_SUPPORT_ACK: '',
         memcacheConstants.TAP_FLAG_REGISTERED_CLIENT: closed_checkpoint_only,
         memcacheConstants.TAP_FLAG_BACKFILL: backfill_age,
         memcacheConstants.TAP_FLAG_CKSUM: '',
-        memcacheConstants.TAP_FLAG_LIST_VBUCKETS: (0,)
+        memcacheConstants.TAP_FLAG_LIST_VBUCKETS: (vblist)
         })
         mc._sendCmd(memcacheConstants.CMD_TAP_CONNECT, tap_name, val, 0, ext)
         cmd, opaque, cas, vbucketId, key, ext, val = readTap(mc)
@@ -174,7 +177,7 @@ def deregister_tap_name(host_port, tap_name):
     finally:
         if mc:
            mc.close()
-    return 1
+    return 0
 
 #Diff between two lists
 def diff(a, b):
