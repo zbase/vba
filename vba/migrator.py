@@ -90,11 +90,13 @@ class Migrator(asyncon.AsynConDispatcher):
         if  self.transfer is None:
             self.transfer = False
         else:
-            self.state = Migrator.RUN
-            return
+            self.source_vb_set = True
 
         if self.source_vb_set and self.dest_vb_set:
-            self.state = Migrator.CHECK_TAP
+            if self.transfer:
+                self.state = Migrator.RUN
+            else:
+                self.state = Migrator.CHECK_TAP
             return
         if not self.source_vb_set:
             t = threading.Thread(target=self.init_vbucket, args=(source, vblist, "active"))
@@ -148,7 +150,11 @@ class Migrator(asyncon.AsynConDispatcher):
     def getTapName(self):
         source = self.config.get('source')
         dest = self.config.get('destination')
-        tap_name = "repli-" + ("%X" % zlib.crc32(self.key))
+        if self.transfer:
+            tap_name = "trans-"
+        else:
+            tap_name = "repli-"
+        tap_name += ("%X" % zlib.crc32(self.key))
         Log.info("tap name %s %s %s" % (source, dest, tap_name))    
         #tap_name = "repli-" + (host+dest2)
         return tap_name
