@@ -135,13 +135,13 @@ def register_tap_name(host_port, tap_name, vblist, ckpoint_vblist, cklist):
     is_registration = True
     closed_checkpoint_only = 0x00
     last_closed_checkpoint_id = -1
-    enable_backfill = False
+    enable_backfill = True 
 
     try:
         mc = mc_bin_client.MemcachedClient(host_port[0], int(host_port[1]))
-        backfill_age = 0xffffffff # Disable backfill by default.
-        if enable_backfill == True:
-            backfill_age = 0x00000000
+        backfill_age = 0x00000000
+        if enable_backfill == False:
+            backfill_age = 0xffffffff
         ext, val = encodeTAPConnectOpts({
         ## The three args for TAP_FLAG_CHECKPOINT represents the number of vbuckets,
         ## the list of vbucket ids, and their last closed checkpoint ids. At this time,
