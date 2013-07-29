@@ -71,9 +71,9 @@ class MigrationManager(asyncon.AsynConDispatcher):
         self.handle_timer()
         self.enable_read()
 
-    def end_migrator(self, key, deregister=True):
+    def end_migrator(self, key, deregister=True, vblist=None):
         migrator_obj = self.vbtable[key].get('migrator')
-        migrator_obj.kill_migrator(deregister)
+        migrator_obj.kill_migrator(deregister, vblist)
 
     def set_config(self, config):
         self.config.put(config)
@@ -211,7 +211,8 @@ class MigrationManager(asyncon.AsynConDispatcher):
                     #v['migrator'] =  self.vbtable[k].get('migrator')
                     #v['migrator'].set_change_config(v)
                         Log.debug('Vbucket list changed for row [%s] from %s to %s, will restart the vbucket migrator', k, v['vblist'], self.vbtable[k]['vblist'])
-                        self.end_migrator(k, False)
+                        diff = list(set(self.vbtable[k]['vblist']) - set(v['vblist']))
+                        self.end_migrator(k, False, diff)
                         dead_keys.append(k)
                         new_migrators.append(self.create_migrator(k,v))
                     else:
@@ -229,9 +230,14 @@ class MigrationManager(asyncon.AsynConDispatcher):
             for en in dead_keys:
                 entry = self.vbtable[en]
                 for vb in entry['vblist']:
-                    if vb in new_vbuckets and entry['destination'] != '' and entry['destination'] != new_vbuckets[vb]:
-                        self.set_vbucket_state(entry['destination'], [vb], "dead") 
-                        Log.info("setting remote vbucket dead %d", vb)
+                    if entry['destination'] != '':
+                        if vb in new_vbuckets and entry['destination'] != new_vbuckets[vb]:
+                                self.set_vbucket_state(entry['destination'], [vb], "dead") 
+                                Log.info("setting remote vbucket dead %d", vb)
+                        else:
+                            self.set_local_vbucket_state([vb], "dead") 
+                            Log.info("setting local vbucket dead %d", vb)
+
 
         self.vbtable = new_vb_table
 

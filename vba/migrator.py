@@ -362,17 +362,18 @@ class Migrator(asyncon.AsynConDispatcher):
         self.state = state
         self.timer = Migrator.INIT_TIMER
 
-    def kill_migrator(self, deregister=True):
+    def kill_migrator(self, deregister=True, vblist=None):
         if not self.vbm_monitor is None:
             self.vbm_monitor.destroy()
             self.vbm_monitor = None
         if self.config == None:
             Log.info("config is null")
         else:    
-            vblist = self.config.get('vblist')
+            if vblist == None:
+                vblist = self.config.get('vblist')
             source = self.config.get('source')
-            dest = self.config.get('destination')
-            self.set_vbucket_state(source, vblist, "dead")
+            #dest = self.config.get('destination')
+            #self.set_vbucket_state(source, vblist, "dead")
             #no need to mark destination as dead
             #self.set_vbucket_state(dest, vblist, "dead")
             # Stop - kill the VBM and return

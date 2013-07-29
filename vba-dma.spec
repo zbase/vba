@@ -2,7 +2,7 @@
 Summary:      VBA and DMA component
 Name:         vba-dma
 Version:      1.0.0.0
-Release:      13
+Release:      14
 Group:        Development/Languages
 License:      zynga 
 Requires:     python-libevent
