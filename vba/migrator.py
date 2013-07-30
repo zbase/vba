@@ -369,11 +369,10 @@ class Migrator(asyncon.AsynConDispatcher):
         if self.config == None:
             Log.info("config is null")
         else:    
-            if vblist == None:
-                vblist = self.config.get('vblist')
-            source = self.config.get('source')
             #dest = self.config.get('destination')
-            #self.set_vbucket_state(source, vblist, "dead")
+            source = self.config.get('source')
+            #if vblist != None:
+             #   self.set_vbucket_state(source, vblist, "dead")
             #no need to mark destination as dead
             #self.set_vbucket_state(dest, vblist, "dead")
             # Stop - kill the VBM and return

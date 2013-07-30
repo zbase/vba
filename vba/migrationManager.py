@@ -231,7 +231,8 @@ class MigrationManager(asyncon.AsynConDispatcher):
                 entry = self.vbtable[en]
                 for vb in entry['vblist']:
                     if entry['destination'] != '':
-                        if vb in new_vbuckets and entry['destination'] != new_vbuckets[vb]:
+                        if vb in new_vbuckets:
+                            if entry['destination'] != new_vbuckets[vb]:
                                 self.set_vbucket_state(entry['destination'], [vb], "dead") 
                                 Log.info("setting remote vbucket dead %d", vb)
                         else:
