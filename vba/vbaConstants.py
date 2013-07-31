@@ -16,4 +16,4 @@ limitations under the License.
 TOT_RETRY_COUNT=3
 VBS_BUFFER_SIZE=4096
 #BACKUP_PATH="/usr/bin"
-BACKUP_PATH="/opt/membase/membase-backup"
+BACKUP_PATH="/opt/zbase/zbase-backup"
