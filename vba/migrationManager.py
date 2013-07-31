@@ -36,6 +36,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
     """Class to parse the config and manage the migrators (which run the VBMs)"""
     INIT, CONFIG, MONITOR, STOP, END = range(5)
     DEFAULT_MB_PORT = 11211
+    DEFAULT_RESTORE_TIME = 60 
 
     def __init__(self, vbs_manager, vbs_pipe_r, vbs_pipe_w):
         self.rowid = 0
@@ -58,6 +59,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
         self.config = Queue()
         self.recentConfig = None
         self.vbs_pipe_w = vbs_pipe_w
+        self.restore_event = threading.Event()
         self.restore_vbuckets = {}
 
     def create_migrator(self, key, row):
@@ -318,6 +320,18 @@ class MigrationManager(asyncon.AsynConDispatcher):
     def set_local_vbucket_state(self, vblist, state):
         return self.set_vbucket_state("127.0.0.1:11211", vblist, state)
 
+
+    def set_restore_event(self):
+        self.restore_event.set()
+
+    def start_restore_timer(self):
+        threading.Timer(MigrationManager.DEFAULT_RESTORE_TIME, self.set_restore_event)
+
+    def send_ok_response(self, cp_vb_ids, cp_arr):
+        data = {"Cmd":"CONFIG", "Status":"OK", "Vbuckets":{"Replica":cp_vb_ids}, "CheckPoints":{"Replica":cp_arr}}
+        self.config_response.put(data) 
+        self.vbs_pipe_w.send("a")
+    
     #activate the vbuckets also
     def get_checkpoints(self):
         cp_vb_ids = self.recentConfig.get("RestoreCheckPoints")
@@ -331,28 +345,39 @@ class MigrationManager(asyncon.AsynConDispatcher):
 
         self.set_local_vbucket_state(cp_vb_ids, "replica")
         cp_arr = []
+        restored_vbs = []
         Log.info("Restoring vbuckets %s" % cp_vb_ids)
+        self.start_restore_timer()
         for i in range(len(cp_vb_ids)):
-            cp_arr.append(0)
-        ret, cp_arr_map = self.restore.get_checkpoints(cp_vb_ids)
-        if ret:
-            restore_status = self.restore.restore_vbuckets(cp_vb_ids)
-            for i in range(len(cp_vb_ids)):
-                statusMap = restore_status[i]
-                ckpoint = cp_arr_map.get(cp_vb_ids[i])
-                if statusMap['status'] == "Restore successful" and ckpoint != None and int(ckpoint) != -1:
-                    cp_arr[i] = int(ckpoint)
-                    
-        Log.info("Restore checkpoint map %s %s" % (cp_vb_ids, cp_arr))
-        for id in cp_vb_ids:
-            try:    
-                del self.restore_vbuckets[id]
-            except Exception, e:
-                Log.error("Could not find vBuckets for restore %s" %e)
+            vb = cp_vb_ids[i]
+            ckpoint = self.get_ckpoint_and_restore(vb)
+            cp_arr.append(ckpoint)
+            restored_vbs.append(vb)
+            if self.restore_event.isSet() or i == len(cp_vb_ids) - 1:
+                self.send_ok_response(restored_vbs, cp_arr) 
+                self.restore_event.clear()
+                if i != len(cp_vb_ids) - 1:
+                    self.start_restore_timer()
+                    restored_vbs = []
+                    cp_arr = []
 
-        data = {"Cmd":"CONFIG", "Status":"OK", "Vbuckets":{"Replica":cp_vb_ids}, "CheckPoints":{"Replica":cp_arr}}
-        self.config_response.put(data) 
-        self.vbs_pipe_w.send("a")
+    def get_ckpoint_and_restore(self, cp_vb_id):
+        ret, cp_arr_map = self.restore.get_checkpoints([cp_vb_id])
+        ckpoint = cp_arr_map.get(cp_vb_id)
+        if ret and ckpoint != None and int(ckpoint) != -1:
+            restore_status = self.restore.restore_vbuckets([cp_vb_id])
+            statusMap = restore_status[0]
+            if statusMap['status'] != "Restore successful":
+                ckpoint = 0
+        else:
+            ckpoint = 0
+                    
+        Log.info("Restore checkpoint map %d %d" % (cp_vb_id, ckpoint))
+        try:    
+            del self.restore_vbuckets[cp_vb_id]
+        except Exception, e:
+            Log.error("Could not find vBuckets for restore %s" %e)
+        return ckpoint
 
     def handle_timer(self):
         Log.info("Handle timer! %d" %self.state)
