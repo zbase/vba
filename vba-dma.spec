@@ -4,7 +4,7 @@ Name:         vba-dma
 Version:      1.0.0.0
 Release:      14
 Group:        Development/Languages
-License:      zynga
+License:      Apache 2.0
 Requires:     python-libevent
 BuildRoot:    %{_tmppath}/%{name}-%{version}-root-%(%{__id_u} -n)
 
