@@ -27,16 +27,20 @@ import sys
 from Queue import *
 from vbaLogger import *
 from vbaConstants import *
-sys.path.insert(0, BACKUP_PATH) 
-from vbucket_restore import vbucketRestore 
+sys.path.insert(0, BACKUP_PATH)
 
 Log = getLogger()
+
+try:
+    from vbucket_restore import vbucketRestore
+except Exception, e:
+	Log.error("Unable to import vbucketRestore:%s" %e)
 
 class MigrationManager(asyncon.AsynConDispatcher):
     """Class to parse the config and manage the migrators (which run the VBMs)"""
     INIT, CONFIG, MONITOR, STOP, END = range(5)
     DEFAULT_MB_PORT = 11211
-    DEFAULT_RESTORE_TIME = 60 
+    DEFAULT_RESTORE_TIME = 60
 
     def __init__(self, vbs_manager, vbs_pipe_r, vbs_pipe_w):
         self.rowid = 0
@@ -95,8 +99,8 @@ class MigrationManager(asyncon.AsynConDispatcher):
 
         if (source == '' or ((vblist == None or len(vblist) == 0) and (tvbid == None or len(tvbid) == 0))):
             raise RuntimeError("For row [" + str(row) + "], source/vbucket list missing")
-           
-        if vblist:  
+
+        if vblist:
             vblist.sort()
         else:
             vblist = []
@@ -145,16 +149,16 @@ class MigrationManager(asyncon.AsynConDispatcher):
         # Create a new table(new_vb_table) from the config data
         # The config data is of the form:
         # [
-        #   {"Source":"192.168.1.1:11211", "VbId":[1,2,3], "Destination":"192.168.1.2:11211"},  
-        #   {"Source":"192.168.1.1:11211", "VbId":[7,8,9], "Destination":"192.168.1.5:11511"},  
+        #   {"Source":"192.168.1.1:11211", "VbId":[1,2,3], "Destination":"192.168.1.2:11211"},
+        #   {"Source":"192.168.1.1:11211", "VbId":[7,8,9], "Destination":"192.168.1.5:11511"},
         #   .
         #   .
         # ]
 
         # The table we maintain is of the form:
         #   source                destination           vblist      interface      migrator
-        #   192.168.1.1:11211     192.168.1.2:11211     1,2,3       eth1          
-        #   192.168.1.1:11211     192.168.1.5:11511     7,8,9       eth1          
+        #   192.168.1.1:11211     192.168.1.2:11211     1,2,3       eth1
+        #   192.168.1.1:11211     192.168.1.5:11511     7,8,9       eth1
         #   .
         #   .
 
@@ -174,9 +178,9 @@ class MigrationManager(asyncon.AsynConDispatcher):
                         newvalue['transfer'] = True
                         newvalue['vblist'] = value['Transfer_VbId']
                         new_vb_table[key_transfer] = newvalue
-                        Log.info("transfer is true. final vblist is %s", str(value['vblist'])) 
+                        Log.info("transfer is true. final vblist is %s", str(value['vblist']))
                         if value['vblist'] == None or len(value['vblist']) == 0:
-                            del new_vb_table[key] 
+                            del new_vb_table[key]
                 except RuntimeError, (message):
                     err_details.append(message)
 
@@ -188,9 +192,9 @@ class MigrationManager(asyncon.AsynConDispatcher):
                 new_migrators.append(self.create_migrator(k,v))
         else:
             # Iterate over the new table and:
-            #   If the row is present in the old table 
+            #   If the row is present in the old table
             #       reset migrator state
-            #   else 
+            #   else
             #       start up a new VBM
 
             new_vbuckets = {}
@@ -228,17 +232,17 @@ class MigrationManager(asyncon.AsynConDispatcher):
 
                 # Iterate over the old table and:
                 #   If the key is not found in the new table, kill the VBM for that row
-         
+
             for en in dead_keys:
                 entry = self.vbtable[en]
                 for vb in entry['vblist']:
                     if entry['destination'] != '':
                         if vb in new_vbuckets:
                             if entry['destination'] != new_vbuckets[vb]:
-                                self.set_vbucket_state(entry['destination'], [vb], "dead") 
+                                self.set_vbucket_state(entry['destination'], [vb], "dead")
                                 Log.info("setting remote vbucket dead %d", vb)
                         else:
-                            self.set_local_vbucket_state([vb], "dead") 
+                            self.set_local_vbucket_state([vb], "dead")
                             Log.info("setting local vbucket dead %d", vb)
 
 
@@ -329,9 +333,9 @@ class MigrationManager(asyncon.AsynConDispatcher):
 
     def send_ok_response(self, cp_vb_ids, cp_arr):
         data = {"Cmd":"CONFIG", "Status":"OK", "Vbuckets":{"Replica":cp_vb_ids}, "CheckPoints":{"Replica":cp_arr}}
-        self.config_response.put(data) 
+        self.config_response.put(data)
         self.vbs_pipe_w.send("a")
-    
+
     #activate the vbuckets also
     def get_checkpoints(self):
         cp_vb_ids = self.recentConfig.get("RestoreCheckPoints")
@@ -354,7 +358,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
             cp_arr.append(ckpoint)
             restored_vbs.append(vb)
             if self.restore_event.isSet() or i == len(cp_vb_ids) - 1:
-                self.send_ok_response(restored_vbs, cp_arr) 
+                self.send_ok_response(restored_vbs, cp_arr)
                 self.restore_event.clear()
                 if i != len(cp_vb_ids) - 1:
                     self.start_restore_timer()
@@ -371,9 +375,9 @@ class MigrationManager(asyncon.AsynConDispatcher):
                 ckpoint = 0
         else:
             ckpoint = 0
-                    
+
         Log.info("Restore checkpoint map %d %d" % (cp_vb_id, ckpoint))
-        try:    
+        try:
             del self.restore_vbuckets[cp_vb_id]
         except Exception, e:
             Log.error("Could not find vBuckets for restore %s" %e)
