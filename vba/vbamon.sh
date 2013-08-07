@@ -9,7 +9,7 @@
 
 USER=nobody
 PIDFILE="/var/run/vbs/vba.pid"
-VBUCKETMIGRATOR=/opt/membase/bin/vbucketmigrator
+VBUCKETMIGRATOR=/opt/zbase/bin/vbucketmigrator
 
 # keep vbucket_agent running  continuously
 while :; do

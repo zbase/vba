@@ -28,6 +28,8 @@ VbucketAgent component
 /etc/init.d/*
 /opt/vba/vbamon.sh
 /opt/vba/*.py
+/opt/vba/*.pyc
+/opt/vba/*.pyo
 
 %changelog
 * Wed Apr 19 2013 <nigupta@zynga.com> 1.0.0.0
