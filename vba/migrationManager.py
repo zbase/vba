@@ -27,14 +27,11 @@ import sys
 from Queue import *
 from vbaLogger import *
 from vbaConstants import *
+from vbucketRestore import *
+
 sys.path.insert(0, BACKUP_PATH)
 
 Log = getLogger()
-
-try:
-    from vbucket_restore import vbucketRestore
-except Exception, e:
-	Log.error("Unable to import vbucketRestore:%s" %e)
 
 class MigrationManager(asyncon.AsynConDispatcher):
     """Class to parse the config and manage the migrators (which run the VBMs)"""
@@ -58,7 +55,7 @@ class MigrationManager(asyncon.AsynConDispatcher):
         self.buffer_size = 10
         self.create_timer()
         self.set_timer()
-        self.restore = vbucketRestore()
+        self.restore = vbucketRestoreWrapper()
         self.enable_read()
         self.config = Queue()
         self.recentConfig = None
