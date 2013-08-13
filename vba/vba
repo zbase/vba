@@ -10,7 +10,7 @@
 USER=nobody
 MONPIDFILE=/var/run/vbs/vbamon.pid
 VBAPIDFILE=/var/run/vbs/vba.pid
-MONVBA=/usr/bin/vbamon.sh
+MONVBA=/opt/vba/vbamon.sh
 VBUCKETMIGRATOR=/opt/membase/bin/vbucketmigrator
 
 # Check that networking is up.
@@ -30,17 +30,17 @@ killprocname () {
 start () {
     mkdir -m 755 -p /var/run/vbs
     chown $USER /var/run/vbs
-    # check if another instance of vbamon is already running 
+    # check if another instance of vbamon is already running
     if [[ -f "$MONPIDFILE" ]];then
         read pid < "$MONPIDFILE"
     fi
     if [[ ! -f "$MONPIDFILE" || -z "$pid" ]];then
         pid=$(pidof $MONVBA)
-    fi 
+    fi
     if [[ -n "$pid" && -d "/proc/$pid" ]];then
         echo "Already running..."
         exit 0
-    fi 
+    fi
 
     # cleanup any vbucket agents, vbucketmigrators still running
     killproc -p $VBAPIDFILE vba.py
